@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Painel de Treinamentos — Riva Stones</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="icon" href="/img/logo.svg">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-row">
+      <img class="logo" src="/img/logo.svg" alt="Riva Stones">
+      <div class="topbar-title">
+        <h1>PAINEL DE TREINAMENTOS NORMATIVOS</h1>
+        <div class="sub" id="headerSub">Carregando…</div>
+      </div>
+      <div class="topbar-spacer"></div>
+      <div class="user-chip">
+        <div class="avatar" id="userAvatar"></div>
+        <div>
+          <div id="userName" style="font-weight:600;color:#fff"></div>
+          <div id="userRole" style="font-size:11px"></div>
+        </div>
+        <button id="btnMyPassword" title="Trocar minha senha">Senha</button>
+        <button id="btnLogout">Sair</button>
+      </div>
+    </div>
+    <nav class="tabs" id="mainTabs">
+      <button data-tab="visao" class="active">Visão Geral</button>
+      <button data-tab="vencimentos">Vencimentos</button>
+      <button data-tab="cargos">Cargos e Empresas</button>
+      <button data-tab="custo">Carga Horária e Custo</button>
+      <button data-tab="qualidade">Qualidade dos Dados</button>
+      <button data-tab="cadastros" class="only-edit" style="display:none">Cadastros</button>
+      <button data-tab="importar" class="only-edit" style="display:none">Importar / Exportar</button>
+      <button data-tab="usuarios" class="only-users" style="display:none">Usuários e Acessos</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- Filtros (abas de indicadores) -->
+    <div class="filters" id="filterBar">
+      <div class="f"><label>Empresa</label><select id="fEmpresa"><option value="">Todas</option></select></div>
+      <div class="f"><label>Cargo</label><select id="fCargo"><option value="">Todos</option></select></div>
+      <div class="f"><label>Treinamento</label><select id="fTreinamento"><option value="">Todos</option></select></div>
+      <div class="f"><label>Situação</label>
+        <select id="fSituacao">
+          <option value="">Todas</option>
+          <option>VÁLIDO</option><option>PENDENTE</option><option>VENCIDO</option>
+        </select>
+      </div>
+      <div class="f"><label>Faixa de vencimento</label>
+        <select id="fFaixa">
+          <option value="">Todas</option>
+          <option value="vencido">Vencido</option>
+          <option value="pendente">Pendente</option>
+          <option value="30">Até 30 dias</option>
+          <option value="60">31 a 60 dias</option>
+          <option value="90">61 a 90 dias</option>
+          <option value="90+">Acima de 90 dias</option>
+        </select>
+      </div>
+      <div class="f"><label>Buscar colaborador</label><input type="text" id="fBusca" placeholder="digite parte do nome"></div>
+      <button class="btn-navy" id="btnLimpar">Limpar filtros</button>
+    </div>
+
+    <section id="tab-visao"></section>
+    <section id="tab-vencimentos" style="display:none"></section>
+    <section id="tab-cargos" style="display:none"></section>
+    <section id="tab-custo" style="display:none"></section>
+    <section id="tab-qualidade" style="display:none"></section>
+    <section id="tab-cadastros" style="display:none"></section>
+    <section id="tab-importar" style="display:none"></section>
+    <section id="tab-usuarios" style="display:none"></section>
+  </main>
+
+  <div class="modal-back" id="modalBack">
+    <div class="modal">
+      <div class="m-head"><h3 id="modalTitle"></h3><button id="modalClose">×</button></div>
+      <div class="m-body" id="modalBody"></div>
+      <div class="m-foot" id="modalFoot"></div>
+    </div>
+  </div>
+  <div class="toast" id="toast"></div>
+
+  <script src="/js/chart.umd.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>

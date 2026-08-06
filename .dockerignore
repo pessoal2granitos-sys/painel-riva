@@ -1,0 +1,7 @@
+node_modules
+data
+*.log
+*.bat
+LEIA-ME.md
+DEPLOY.md
+.git

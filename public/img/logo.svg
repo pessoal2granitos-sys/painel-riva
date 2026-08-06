@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 84" role="img" aria-label="Riva Stones">
+  <g>
+    <path d="M14 14 h52 a8 8 0 0 1 8 8 v28 a8 8 0 0 1 -8 8 h-14 l6 12 -20 -12 h-24 a8 8 0 0 1 -8 -8 v-28 a8 8 0 0 1 8 -8 z"
+          fill="none" stroke="#ffffff" stroke-width="9" stroke-linejoin="round"/>
+    <path d="M52 34 l16 24" stroke="#F58634" stroke-width="9" stroke-linecap="round"/>
+  </g>
+  <text x="92" y="52" font-family="Arial Black, Arial, sans-serif" font-weight="900" font-style="italic"
+        font-size="44" fill="#F58634" letter-spacing="1">RIVA</text>
+  <text x="96" y="74" font-family="Arial, sans-serif" font-weight="600" font-size="17"
+        fill="#ffffff" letter-spacing="10">STONES</text>
+</svg>

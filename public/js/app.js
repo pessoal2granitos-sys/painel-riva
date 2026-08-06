@@ -1,0 +1,1094 @@
+'use strict';
+/* Painel de Treinamentos Normativos — Riva Stones */
+
+let DS = null;   // dataset do servidor
+let ME = null;   // usuário logado
+let ROWS = [];   // grid enriquecido
+let currentTab = 'visao';
+let charts = {};
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const brDate = (iso) => iso ? iso.split('-').reverse().join('/') : '';
+const fmtN = (n) => Number(n || 0).toLocaleString('pt-BR');
+const fmtH = (n) => Number(n || 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 });
+const fmtMoney = (n) => Number(n || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const pct = (a, b) => b ? (a / b * 100) : 0;
+const fmtPct = (v) => v.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%';
+
+const ROLE_LABEL = { admin: 'Administradora', supervisor: 'Supervisor', gestor: 'Gestor', lider: 'Líder' };
+const STATUS_CLASS = { 'VÁLIDO': 'valido', 'PENDENTE': 'pendente', 'VENCIDO': 'vencido' };
+
+// O agrupamento de cargos por nível ("FIOLISTA III" -> "FIOLISTA") vem calculado
+// do servidor em employee.cargo_base, usando a mesma regra do vínculo de trilhas.
+
+function colorByPct(p) { return p < 60 ? 'var(--red)' : p < 80 ? 'var(--amber)' : 'var(--green)'; }
+
+// ---------- carga ----------
+async function api(url, opts = {}) {
+  const res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  if (res.status === 401) { location.href = '/login'; throw new Error('sessão expirada'); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Erro na requisição');
+  return data;
+}
+
+async function loadAll() {
+  DS = await api('/api/dataset');
+  ME = DS.user;
+  const emap = new Map(DS.employees.map(e => [e.id, e]));
+  const tmap = new Map(DS.trainings.map(t => [t.id, t]));
+  ROWS = DS.grid.map(g => {
+    const e = emap.get(g.employee_id), t = tmap.get(g.training_id);
+    return { ...g, emp: e, tr: t, empName: e.name, company: e.company_name,
+             companyShort: e.company_short || e.company_name, cargo: e.cargo_name || '—',
+             cargoBase: e.cargo_base || e.cargo_name || '—', trName: t.name };
+  });
+  renderHeader();
+  fillFilters();
+  renderTab();
+}
+
+function renderHeader() {
+  const comps = DS.companies.map(c => c.short_name || c.name).join(' · ');
+  $('headerSub').innerHTML = esc(comps) + ' &nbsp;|&nbsp; Posição em <b>' + brDate(DS.today) + '</b>';
+  $('userName').textContent = ME.name;
+  $('userRole').textContent = ROLE_LABEL[ME.role] || ME.role;
+  $('userAvatar').textContent = ME.name.trim().split(/\s+/).map(p => p[0]).slice(0, 2).join('').toUpperCase();
+  const canEdit = ME.role === 'admin' || ME.role === 'supervisor';
+  document.querySelectorAll('.only-edit').forEach(b => b.style.display = canEdit ? '' : 'none');
+  document.querySelectorAll('.only-users').forEach(b => b.style.display = canEdit ? '' : 'none');
+}
+
+function fillFilters() {
+  const opts = (list) => list.map(v => '<option>' + esc(v) + '</option>').join('');
+  const keep = { e: $('fEmpresa').value, c: $('fCargo').value, t: $('fTreinamento').value };
+  $('fEmpresa').innerHTML = '<option value="">Todas</option>' + DS.companies
+    .map(c => `<option value="${esc(c.name)}">${esc(c.short_name || c.name)}</option>`).join('');
+  const cargoNames = [...new Set(DS.employees.map(e => e.cargo_name).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  $('fCargo').innerHTML = '<option value="">Todos</option>' + opts(cargoNames);
+  $('fTreinamento').innerHTML = '<option value="">Todos</option>' + opts(DS.trainings.map(t => t.name));
+  $('fEmpresa').value = keep.e; $('fCargo').value = keep.c; $('fTreinamento').value = keep.t;
+}
+
+// ---------- filtros ----------
+function rowMatches(r) {
+  const fe = $('fEmpresa').value, fc = $('fCargo').value, ft = $('fTreinamento').value,
+        fs = $('fSituacao').value, ff = $('fFaixa').value, fb = $('fBusca').value.trim().toLowerCase();
+  if (fe && r.company !== fe) return false;
+  if (fc && r.cargo !== fc) return false;
+  if (ft && r.trName !== ft) return false;
+  if (fs && r.status !== fs) return false;
+  if (fb && !r.empName.toLowerCase().includes(fb)) return false;
+  if (ff) {
+    if (ff === 'vencido' && r.status !== 'VENCIDO') return false;
+    if (ff === 'pendente' && r.status !== 'PENDENTE') return false;
+    if (ff === '30' && !(r.status === 'VÁLIDO' && r.dias <= 30)) return false;
+    if (ff === '60' && !(r.status === 'VÁLIDO' && r.dias > 30 && r.dias <= 60)) return false;
+    if (ff === '90' && !(r.status === 'VÁLIDO' && r.dias > 60 && r.dias <= 90)) return false;
+    if (ff === '90+' && !(r.status === 'VÁLIDO' && r.dias > 90)) return false;
+  }
+  return true;
+}
+const fRows = () => ROWS.filter(rowMatches);
+
+function fEmployees() {
+  const fe = $('fEmpresa').value, fc = $('fCargo').value, fb = $('fBusca').value.trim().toLowerCase();
+  return DS.employees.filter(e => {
+    if (e.demissao && e.demissao <= DS.today) return false;
+    if (fe && e.company_name !== fe) return false;
+    if (fc && (e.cargo_name || '') !== fc) return false;
+    if (fb && !e.name.toLowerCase().includes(fb)) return false;
+    return true;
+  });
+}
+
+// ---------- componentes ----------
+function kpi(label, value, sub, cls = '') {
+  return `<div class="kpi ${cls}"><div class="k-label">${label}</div><div class="k-value">${value}</div><div class="k-sub">${sub}</div></div>`;
+}
+function hbars(items, colorFn, maxW) {
+  const max = maxW || Math.max(1, ...items.map(i => i.value));
+  return items.map(i => `
+    <div class="hbar-row" title="${esc(i.label)}: ${fmtN(i.value)}">
+      <div class="lbl">${esc(i.label)}</div>
+      <div class="track"><div class="fill" style="width:${Math.min(100, i.value / max * 100)}%;background:${colorFn ? colorFn(i) : 'var(--navy)'}"></div></div>
+      <div class="val">${i.fmt || fmtN(i.value)}</div>
+    </div>`).join('') || '<div class="empty">Sem dados para os filtros atuais</div>';
+}
+function destroyChart(key) { if (charts[key]) { charts[key].destroy(); delete charts[key]; } }
+
+// Escreve o valor acima de cada barra, como na planilha de referência.
+const barValueLabels = {
+  id: 'barValueLabels',
+  afterDatasetsDraw(chart) {
+    const { ctx } = chart;
+    ctx.save();
+    ctx.font = '600 11px "Segoe UI", sans-serif';
+    ctx.fillStyle = '#14395c';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    for (const meta of chart.getSortedVisibleDatasetMetas()) {
+      meta.data.forEach((bar, i) => {
+        const v = chart.data.datasets[meta.index].data[i];
+        if (v) ctx.fillText(fmtN(v), bar.x, bar.y - 4);
+      });
+    }
+    ctx.restore();
+  }
+};
+
+function sortTable(tableId, rows, renderFn, state, col, types) {
+  if (state.col === col) state.dir = -state.dir; else { state.col = col; state.dir = 1; }
+  rows.sort((a, b) => {
+    const va = a[col], vb = b[col];
+    if (types && types[col] === 'num') return ((va ?? -Infinity) - (vb ?? -Infinity)) * state.dir;
+    return String(va ?? '').localeCompare(String(vb ?? ''), 'pt-BR') * state.dir;
+  });
+  renderFn();
+}
+
+// ---------- abas ----------
+function renderTab() {
+  const dash = ['visao', 'vencimentos', 'cargos', 'custo', 'qualidade'].includes(currentTab);
+  $('filterBar').style.display = dash ? '' : 'none';
+  document.querySelectorAll('main > section').forEach(s => s.style.display = 'none');
+  $('tab-' + currentTab).style.display = '';
+  ({ visao: renderVisao, vencimentos: renderVencimentos, cargos: renderCargos, custo: renderCusto,
+     qualidade: renderQualidade, cadastros: renderCadastros, importar: renderImportar, usuarios: renderUsuarios }[currentTab])();
+}
+
+// ===== Visão Geral =====
+function renderVisao() {
+  const rows = fRows();
+  const emps = fEmployees();
+  const validos = rows.filter(r => r.status === 'VÁLIDO').length;
+  const pend = rows.filter(r => r.status === 'PENDENTE').length;
+  const venc = rows.filter(r => r.status === 'VENCIDO').length;
+  const horas = rows.filter(r => r.status !== 'VÁLIDO').reduce((s, r) => s + (r.horas || 0), 0);
+  const ader = pct(validos, rows.length);
+
+  // por empresa
+  const byComp = {};
+  for (const r of rows) {
+    byComp[r.companyShort] = byComp[r.companyShort] || { t: 0, v: 0 };
+    byComp[r.companyShort].t++; if (r.status === 'VÁLIDO') byComp[r.companyShort].v++;
+  }
+  const compItems = Object.entries(byComp).map(([label, d]) => {
+    const p = pct(d.v, d.t);
+    return { label, value: p, fmt: fmtPct(p) };
+  }).sort((a, b) => b.value - a.value);
+
+  // faixas
+  const faixas = [
+    { label: 'Vencido', value: venc, color: 'var(--red)' },
+    { label: 'Pendente', value: pend, color: 'var(--amber)' },
+    { label: 'Até 30 dias', value: rows.filter(r => r.status === 'VÁLIDO' && r.dias <= 30).length, color: 'var(--red)' },
+    { label: '31 a 60 dias', value: rows.filter(r => r.status === 'VÁLIDO' && r.dias > 30 && r.dias <= 60).length, color: 'var(--amber)' },
+    { label: '61 a 90 dias', value: rows.filter(r => r.status === 'VÁLIDO' && r.dias > 60 && r.dias <= 90).length, color: 'var(--green)' },
+    { label: 'Acima de 90 dias', value: rows.filter(r => r.status === 'VÁLIDO' && r.dias > 90).length, color: 'var(--green)' },
+  ];
+
+  // não conformidades por treinamento
+  const byTr = {};
+  for (const r of rows) if (r.status !== 'VÁLIDO') byTr[r.trName] = (byTr[r.trName] || 0) + 1;
+  const trItems = Object.entries(byTr).map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
+
+  // colaboradores com maior pendência
+  const byEmp = {};
+  for (const r of rows) {
+    const k = r.employee_id;
+    byEmp[k] = byEmp[k] || { name: r.empName, company: r.companyShort, cargo: r.cargo, p: 0, v: 0, t: 0, ok: 0 };
+    byEmp[k].t++;
+    if (r.status === 'PENDENTE') byEmp[k].p++;
+    else if (r.status === 'VENCIDO') byEmp[k].v++;
+    else byEmp[k].ok++;
+  }
+  const empItems = Object.values(byEmp).filter(e => e.p + e.v > 0).sort((a, b) => (b.p + b.v) - (a.p + a.v));
+
+  $('tab-visao').innerHTML = `
+    <div class="kpis">
+      ${kpi('Colaboradores', fmtN(emps.length), 'pessoas na base filtrada')}
+      ${kpi('Treinamentos exigidos', fmtN(rows.length), 'registros colaborador × NR')}
+      ${kpi('Aderência', fmtPct(ader), fmtN(validos) + ' válidos · meta 95%', ader >= 95 ? 'green' : ader >= 75 ? 'amber' : 'red')}
+      ${kpi('Pendentes', fmtN(pend), 'nunca realizados', 'amber')}
+      ${kpi('Vencidos', fmtN(venc), 'fora da validade', 'red')}
+      ${kpi('Horas a treinar', fmtH(horas) + ' h', 'para regularizar tudo', 'orange')}
+    </div>
+    <div class="grid cols-3">
+      <div class="card">
+        <h3>Distribuição por situação</h3>
+        <div class="chart-box"><canvas id="chartDonut"></canvas></div>
+        <div class="legend">
+          <div class="li"><span class="dot" style="background:var(--green)"></span>VÁLIDO · <b>${fmtN(validos)}</b> (${fmtPct(pct(validos, rows.length))})</div>
+          <div class="li"><span class="dot" style="background:var(--amber)"></span>PENDENTE · <b>${fmtN(pend)}</b> (${fmtPct(pct(pend, rows.length))})</div>
+          <div class="li"><span class="dot" style="background:var(--red)"></span>VENCIDO · <b>${fmtN(venc)}</b> (${fmtPct(pct(venc, rows.length))})</div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Aderência por empresa <small>% de treinamentos válidos</small></h3>
+        ${hbars(compItems, i => colorByPct(i.value), 100)}
+      </div>
+      <div class="card">
+        <h3>Registros por faixa de vencimento</h3>
+        ${faixas.map(f => `
+          <div class="hbar-row"><div class="lbl">${f.label}</div>
+          <div class="track"><div class="fill" style="width:${Math.min(100, pct(f.value, Math.max(1, ...faixas.map(x => x.value))))}%;background:${f.color}"></div></div>
+          <div class="val">${fmtN(f.value)}</div></div>`).join('')}
+      </div>
+    </div>
+    <div class="grid split-13">
+      <div class="card">
+        <h3>Treinamentos com mais não conformidades <small>pendentes + vencidos</small></h3>
+        ${hbars(trItems, () => 'var(--red)')}
+      </div>
+      <div class="card">
+        <h3>Colaboradores com maior pendência</h3>
+        <div class="tbl-wrap"><table class="tbl">
+        <colgroup><col style="width:32%"><col style="width:18%"><col style="width:26%"><col style="width:8%"><col style="width:8%"><col style="width:8%"></colgroup>
+        <thead><tr>
+          <th>Colaborador</th><th>Empresa</th><th>Função</th><th style="text-align:center">Pend.</th><th style="text-align:center">Venc.</th><th style="text-align:center">Ader.</th>
+        </tr></thead><tbody>
+          ${empItems.slice(0, 60).map(e => `<tr>
+            <td>${esc(e.name)}</td><td>${esc(e.company)}</td><td>${esc(e.cargo)}</td>
+            <td style="text-align:center;font-weight:700;color:var(--amber)">${e.p}</td>
+            <td style="text-align:center;font-weight:700;color:var(--red)">${e.v}</td>
+            <td style="text-align:center">${fmtPct(pct(e.ok, e.t))}</td></tr>`).join('') || '<tr><td colspan="6" class="empty">Nenhuma pendência 🎉</td></tr>'}
+        </tbody></table></div>
+      </div>
+    </div>`;
+
+  destroyChart('donut');
+  charts.donut = new Chart($('chartDonut'), {
+    type: 'doughnut',
+    data: {
+      labels: ['Válido', 'Pendente', 'Vencido'],
+      datasets: [{ data: [validos, pend, venc], backgroundColor: ['#2e8b46', '#e9a13b', '#cf3b2f'], borderWidth: 3, borderColor: '#fff' }]
+    },
+    options: { cutout: '62%', plugins: { legend: { display: false } }, maintainAspectRatio: false }
+  });
+  // total no centro
+  const box = $('chartDonut').parentElement;
+  const center = document.createElement('div');
+  center.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none';
+  center.innerHTML = `<div style="font-size:30px;font-weight:800;color:var(--navy)">${fmtN(rows.length)}</div><div style="font-size:11px;color:var(--muted)">registros</div>`;
+  box.appendChild(center);
+}
+
+// ===== Vencimentos =====
+let agendaState = { col: 'dias', dir: 1 };
+function renderVencimentos() {
+  const rows = fRows();
+  const venc = rows.filter(r => r.status === 'VENCIDO');
+  const v30 = rows.filter(r => r.status === 'VÁLIDO' && r.dias <= 30);
+  const v60 = rows.filter(r => r.status === 'VÁLIDO' && r.dias <= 60);
+  const v90 = rows.filter(r => r.status === 'VÁLIDO' && r.dias <= 90);
+  const pessoas90 = new Set(v90.map(r => r.employee_id)).size;
+  const horas90 = v90.reduce((s, r) => s + (r.tr.ch_reciclagem || 0), 0);
+
+  // gráfico por mês (18 meses a partir do mês atual)
+  const months = [];
+  const base = new Date(DS.today + 'T12:00:00'); base.setDate(1);
+  for (let i = 0; i < 18; i++) {
+    const d = new Date(base); d.setMonth(d.getMonth() + i);
+    months.push({ key: d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'), label: String(d.getMonth() + 1).padStart(2, '0') + '/' + d.getFullYear(), count: 0 });
+  }
+  for (const r of rows) {
+    if (!r.vencimento) continue;
+    const key = r.vencimento.slice(0, 7);
+    const m = months.find(x => x.key === key);
+    if (m) m.count++;
+  }
+
+  // turmas a programar (90 dias) por treinamento
+  const turmas = {};
+  for (const r of v90) turmas[r.trName] = (turmas[r.trName] || 0) + 1;
+  const turmasItems = Object.entries(turmas).map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
+
+  // agenda: tudo com vencimento + pendentes no fim se filtrado
+  const agenda = rows.filter(r => r.vencimento).map(r => ({
+    empName: r.empName, company: r.companyShort, cargo: r.cargo, trName: r.trName,
+    realizacao: r.realizacao, vencimento: r.vencimento, dias: r.dias, status: r.status,
+  }));
+  agenda.sort((a, b) => (a.dias ?? 99999) - (b.dias ?? 99999));
+
+  const renderAgendaBody = () => {
+    $('agendaBody').innerHTML = agenda.slice(0, 400).map(a => `<tr>
+      <td>${esc(a.empName)}</td><td>${esc(a.company)}</td><td>${esc(a.cargo)}</td><td>${esc(a.trName)}</td>
+      <td>${brDate(a.realizacao)}</td><td>${brDate(a.vencimento)}</td>
+      <td style="text-align:center;font-weight:700;color:${a.dias < 0 ? 'var(--red)' : a.dias <= 60 ? 'var(--amber)' : 'var(--navy)'}">${a.dias}</td>
+      <td><span class="badge ${STATUS_CLASS[a.status]}">${a.status}</span></td></tr>`).join('') ||
+      '<tr><td colspan="8" class="empty">Sem registros</td></tr>';
+  };
+
+  $('tab-vencimentos').innerHTML = `
+    <div class="kpis">
+      ${kpi('Já vencidos', fmtN(venc.length), 'ação imediata', 'red')}
+      ${kpi('Vence em 30 dias', fmtN(v30.length), 'programar turma', 'amber')}
+      ${kpi('Vence em 60 dias', fmtN(v60.length), 'acumulado', 'orange')}
+      ${kpi('Vence em 90 dias', fmtN(v90.length), 'acumulado')}
+      ${kpi('Pessoas a reciclar (90d)', fmtN(pessoas90), 'colaboradores distintos')}
+      ${kpi('Horas de reciclagem (90d)', fmtH(horas90) + ' h', 'carga a contratar', 'green')}
+    </div>
+    <div class="grid split-13">
+      <div class="card">
+        <h3>Treinamentos a vencer por mês <small>próximos 18 meses</small></h3>
+        <div class="chart-box"><canvas id="chartMeses"></canvas></div>
+      </div>
+      <div class="card">
+        <h3>Turmas a programar em 90 dias</h3>
+        ${hbars(turmasItems, () => '#2a9d8f')}
+      </div>
+    </div>
+    <div class="card">
+      <h3>Agenda detalhada <small>do mais crítico ao mais distante · clique no cabeçalho para reordenar</small></h3>
+      <div class="tbl-wrap" style="max-height:520px"><table class="tbl"><thead><tr>
+        <th data-c="empName">Colaborador</th><th data-c="company">Empresa</th><th data-c="cargo">Função</th>
+        <th data-c="trName">Treinamento</th><th data-c="realizacao">Realização</th><th data-c="vencimento">Vencimento</th>
+        <th data-c="dias">Dias</th><th data-c="status">Situação</th>
+      </tr></thead><tbody id="agendaBody"></tbody></table></div>
+    </div>`;
+  renderAgendaBody();
+  document.querySelectorAll('#tab-vencimentos thead th').forEach(th => th.addEventListener('click', () =>
+    sortTable('agenda', agenda, renderAgendaBody, agendaState, th.dataset.c,
+      { dias: 'num', realizacao: 'num', vencimento: 'num' })));
+
+  destroyChart('meses');
+  charts.meses = new Chart($('chartMeses'), {
+    type: 'bar',
+    data: {
+      labels: months.map(m => m.label),
+      datasets: [{
+        data: months.map(m => m.count),
+        backgroundColor: months.map((m, i) => i === 0 ? '#cf3b2f' : i === 1 ? '#e9a13b' : '#1d4b76'),
+        borderRadius: 5,
+      }]
+    },
+    options: {
+      plugins: { legend: { display: false } }, maintainAspectRatio: false,
+      layout: { padding: { top: 18 } },
+      scales: {
+        y: { display: false, beginAtZero: true, grace: '12%' },
+        x: { grid: { display: false }, ticks: { font: { size: 10 }, maxRotation: 60, minRotation: 60 } }
+      }
+    },
+    plugins: [barValueLabels]
+  });
+}
+
+// ===== Cargos e Empresas =====
+function renderCargos() {
+  const rows = fRows();
+  const emps = fEmployees();
+  const byEmp = {};
+  for (const r of rows) {
+    byEmp[r.employee_id] = byEmp[r.employee_id] || { nc: 0, t: 0 };
+    byEmp[r.employee_id].t++;
+    if (r.status !== 'VÁLIDO') byEmp[r.employee_id].nc++;
+  }
+  const emDia = emps.filter(e => byEmp[e.id] && byEmp[e.id].nc === 0).length;
+  const comPend = emps.filter(e => byEmp[e.id] && byEmp[e.id].nc > 0).length;
+  const trailCargos = new Set(DS.cargosWithTrail);
+  const lacunas = emps.filter(e => !e.cargo_id || !trailCargos.has(e.cargo_id)).length;
+  const validos = rows.filter(r => r.status === 'VÁLIDO').length;
+
+  // por cargo (agrupado pela base do nome)
+  const byCargo = {};
+  for (const r of rows) {
+    const k = r.cargoBase;
+    byCargo[k] = byCargo[k] || { t: 0, v: 0, nc: 0 };
+    byCargo[k].t++;
+    if (r.status === 'VÁLIDO') byCargo[k].v++; else byCargo[k].nc++;
+  }
+  const aderItems = Object.entries(byCargo).filter(([, d]) => d.t >= 5)
+    .map(([label, d]) => ({ label, value: pct(d.v, d.t), fmt: fmtPct(pct(d.v, d.t)) }))
+    .sort((a, b) => a.value - b.value);
+  const ncItems = Object.entries(byCargo).filter(([, d]) => d.nc > 0)
+    .map(([label, d]) => ({ label, value: d.nc })).sort((a, b) => b.value - a.value);
+
+  // matriz empresa × cargo
+  const matrix = {};
+  for (const r of rows) {
+    const k = r.companyShort + '|' + r.cargoBase;
+    matrix[k] = matrix[k] || { company: r.companyShort, cargo: r.cargoBase, v: 0, p: 0, x: 0 };
+    if (r.status === 'VÁLIDO') matrix[k].v++;
+    else if (r.status === 'PENDENTE') matrix[k].p++;
+    else matrix[k].x++;
+  }
+  const matrixRows = Object.values(matrix).map(m => ({ ...m, total: m.v + m.p + m.x, ader: pct(m.v, m.v + m.p + m.x) }))
+    .sort((a, b) => a.company.localeCompare(b.company, 'pt-BR') || a.ader - b.ader);
+
+  $('tab-cargos').innerHTML = `
+    <div class="kpis">
+      ${kpi('Colaboradores', fmtN(emps.length), 'na base filtrada')}
+      ${kpi('Totalmente em dia', fmtN(emDia), 'sem nenhuma pendência', 'green')}
+      ${kpi('Com pendência', fmtN(comPend), 'ao menos 1 item aberto', 'red')}
+      ${kpi('% em dia', fmtPct(pct(emDia, emps.length)), 'colaboradores 100% ok', 'green')}
+      ${kpi('Lacunas de trilha', fmtN(lacunas), 'sem trilha definida', 'amber')}
+      ${kpi('Aderência geral', fmtPct(pct(validos, rows.length)), fmtN(validos) + ' de ' + fmtN(rows.length))}
+    </div>
+    <div class="grid cols-2">
+      <div class="card">
+        <h3>Cargos com menor aderência <small>mínimo 5 registros</small></h3>
+        ${hbars(aderItems, i => colorByPct(i.value), 100)}
+      </div>
+      <div class="card">
+        <h3>Não conformidades por cargo</h3>
+        ${hbars(ncItems, () => 'var(--amber)')}
+      </div>
+    </div>
+    <div class="card">
+      <h3>Matriz empresa × cargo × situação</h3>
+      <div class="tbl-wrap" style="max-height:520px"><table class="tbl"><thead><tr>
+        <th>Empresa</th><th>Cargo</th><th style="text-align:center">Válidos</th><th style="text-align:center">Pendentes</th>
+        <th style="text-align:center">Vencidos</th><th style="text-align:center">Total</th><th style="text-align:center">Aderência</th>
+      </tr></thead><tbody>
+        ${matrixRows.map(m => `<tr>
+          <td>${esc(m.company)}</td><td>${esc(m.cargo)}</td>
+          <td style="text-align:center;color:var(--green);font-weight:700">${m.v}</td>
+          <td style="text-align:center;color:var(--amber);font-weight:700">${m.p}</td>
+          <td style="text-align:center;color:var(--red);font-weight:700">${m.x}</td>
+          <td style="text-align:center;font-weight:700">${m.total}</td>
+          <td style="text-align:center;font-weight:700;color:${colorByPct(m.ader)}">${fmtPct(m.ader)}</td></tr>`).join('')}
+      </tbody></table></div>
+    </div>`;
+}
+
+// ===== Carga Horária e Custo =====
+function renderCusto() {
+  const rows = fRows();
+  const pend = rows.filter(r => r.status === 'PENDENTE');
+  const venc = rows.filter(r => r.status === 'VENCIDO');
+  const horasForm = pend.reduce((s, r) => s + (r.tr.ch_formacao || 0), 0);
+  const horasRec = venc.reduce((s, r) => s + (r.tr.ch_reciclagem || 0), 0);
+  const custoTotal = rows.filter(r => r.status !== 'VÁLIDO').reduce((s, r) => s + (r.custo || 0), 0);
+  const temCusto = DS.trainings.some(t => (t.custo_formacao || 0) > 0 || (t.custo_reciclagem || 0) > 0);
+
+  const byTr = {};
+  for (const r of rows) {
+    byTr[r.trName] = byTr[r.trName] || { tr: r.tr, p: 0, v: 0 };
+    if (r.status === 'PENDENTE') byTr[r.trName].p++;
+    else if (r.status === 'VENCIDO') byTr[r.trName].v++;
+  }
+  const items = Object.entries(byTr).map(([name, d]) => {
+    const horas = d.p * (d.tr.ch_formacao || 0) + d.v * (d.tr.ch_reciclagem || 0);
+    const custo = d.p * (d.tr.custo_formacao || 0) + d.v * (d.tr.custo_reciclagem || 0);
+    return { name, ...d, horas, custo };
+  }).filter(i => i.p + i.v > 0).sort((a, b) => b.horas - a.horas);
+
+  $('tab-custo').innerHTML = `
+    <div class="kpis">
+      ${kpi('Horas de formação', fmtH(horasForm) + ' h', fmtN(pend.length) + ' treinamentos pendentes', 'amber')}
+      ${kpi('Horas de reciclagem', fmtH(horasRec) + ' h', fmtN(venc.length) + ' treinamentos vencidos', 'red')}
+      ${kpi('Total de horas', fmtH(horasForm + horasRec) + ' h', 'para regularizar tudo', 'orange')}
+      ${kpi('Custo estimado', temCusto ? fmtMoney(custoTotal) : '—', temCusto ? 'com base nos custos cadastrados' : 'cadastre os custos em Cadastros → Treinamentos', 'green')}
+    </div>
+    <div class="card">
+      <h3>Plano de regularização por treinamento <small>pendentes geram formação; vencidos geram reciclagem</small></h3>
+      <div class="tbl-wrap" style="max-height:560px"><table class="tbl"><thead><tr>
+        <th>Treinamento</th><th style="text-align:center">Pendentes</th><th style="text-align:center">Vencidos</th>
+        <th style="text-align:center">CH formação</th><th style="text-align:center">CH reciclagem</th>
+        <th style="text-align:center">Horas totais</th><th style="text-align:center">Custo estimado</th>
+      </tr></thead><tbody>
+        ${items.map(i => `<tr>
+          <td>${esc(i.name)}</td>
+          <td style="text-align:center;color:var(--amber);font-weight:700">${i.p}</td>
+          <td style="text-align:center;color:var(--red);font-weight:700">${i.v}</td>
+          <td style="text-align:center">${i.tr.ch_formacao != null ? fmtH(i.tr.ch_formacao) + ' h' : '—'}</td>
+          <td style="text-align:center">${i.tr.ch_reciclagem != null ? fmtH(i.tr.ch_reciclagem) + ' h' : '—'}</td>
+          <td style="text-align:center;font-weight:700">${fmtH(i.horas)} h</td>
+          <td style="text-align:center">${i.custo > 0 ? fmtMoney(i.custo) : '—'}</td></tr>`).join('') ||
+          '<tr><td colspan="7" class="empty">Nada a regularizar 🎉</td></tr>'}
+      </tbody></table></div>
+      <p class="hint">Valores de carga horária vêm da Matriz de C.H. Os custos por treinamento podem ser cadastrados em <b>Cadastros → Treinamentos</b> (custo por pessoa de formação e de reciclagem).</p>
+    </div>`;
+}
+
+// ===== Qualidade dos Dados =====
+function renderQualidade() {
+  const emps = DS.employees.filter(e => !(e.demissao && e.demissao <= DS.today));
+  const trailCargos = new Set(DS.cargosWithTrail);
+  const semCargo = emps.filter(e => !e.cargo_id);
+  const semTrilha = emps.filter(e => e.cargo_id && !trailCargos.has(e.cargo_id));
+  const foraTrilha = ROWS.filter(r => !r.required && r.record_id);
+  const semVenc = ROWS.filter(r => r.record_id && r.realizacao && !r.vencimento);
+  const trSemMatriz = DS.trainings.filter(t => t.ch_formacao == null || t.validade_meses == null);
+  const semLanc = emps.filter(e => !ROWS.some(r => r.employee_id === e.id && r.record_id));
+  const semAdmissao = emps.filter(e => !e.admissao);
+  const desligados = DS.employees.filter(e => e.demissao && e.demissao <= DS.today);
+
+  const qc = (title, list, fmt, okMsg) => `
+    <div class="qcard">
+      <h4>${title}</h4>
+      <div class="qty ${list.length === 0 ? 'ok' : 'warn'}">${fmtN(list.length)}</div>
+      ${list.length ? `<ul>${list.slice(0, 40).map(fmt).join('')}</ul>${list.length > 40 ? '<div class="hint">… e mais ' + (list.length - 40) + '</div>' : ''}` : `<div class="hint">${okMsg}</div>`}
+    </div>`;
+
+  $('tab-qualidade').innerHTML = `
+    <div class="grid cols-3">
+      ${qc('Colaboradores sem cargo definido', semCargo, e => `<li>${esc(e.name)} · ${esc(e.company_short || e.company_name)}</li>`, 'Todos os colaboradores têm cargo. ✔')}
+      ${qc('Cargos sem trilha de treinamentos', semTrilha, e => `<li>${esc(e.name)} · ${esc(e.cargo_name)} · ${esc(e.company_short || e.company_name)}</li>`, 'Todas as trilhas definidas. ✔')}
+      ${qc('Lançamentos fora da trilha do cargo', foraTrilha, r => `<li>${esc(r.empName)} · ${esc(r.trName)}</li>`, 'Nenhum lançamento fora da trilha. ✔')}
+      ${qc('Lançamentos sem data de vencimento', semVenc, r => `<li>${esc(r.empName)} · ${esc(r.trName)} (${brDate(r.realizacao)})</li>`, 'Todos os lançamentos têm vencimento. ✔')}
+      ${qc('Treinamentos sem matriz completa (CH/validade)', trSemMatriz, t => `<li>${esc(t.name)}</li>`, 'Matriz completa para todos. ✔')}
+      ${qc('Colaboradores sem nenhum lançamento', semLanc, e => `<li>${esc(e.name)} · ${esc(e.company_short || e.company_name)}</li>`, 'Todos têm ao menos 1 lançamento. ✔')}
+      ${qc('Colaboradores sem data de admissão', semAdmissao, e => `<li>${esc(e.name)} · ${esc(e.company_short || e.company_name)}</li>`, 'Todas as admissões preenchidas. ✔')}
+      ${qc('Colaboradores desligados (fora do painel)', desligados, e => `<li>${esc(e.name)} · ${brDate(e.demissao)}</li>`, 'Nenhum desligamento registrado.')}
+    </div>`;
+}
+
+// ===== Cadastros =====
+let cadTab = 'colaboradores';
+function renderCadastros() {
+  const sub = {
+    colaboradores: renderCadColab, empresas: renderCadEmpresas, cargostrilhas: renderCadCargos,
+    treinamentos: renderCadTreinamentos, lancamentos: renderCadLancamentos,
+  };
+  $('tab-cadastros').innerHTML = `
+    <div class="admin-head"><h2>Cadastros</h2></div>
+    <div class="subtabs" id="cadSubtabs">
+      <button data-s="colaboradores">Colaboradores</button>
+      <button data-s="empresas">Empresas</button>
+      <button data-s="cargostrilhas">Cargos e Trilhas</button>
+      <button data-s="treinamentos">Treinamentos (Matriz)</button>
+      <button data-s="lancamentos">Lançamentos</button>
+    </div>
+    <div id="cadContent"></div>`;
+  document.querySelectorAll('#cadSubtabs button').forEach(b => {
+    b.classList.toggle('active', b.dataset.s === cadTab);
+    b.addEventListener('click', () => { cadTab = b.dataset.s; renderCadastros(); });
+  });
+  sub[cadTab]();
+}
+
+function empPendCounts() {
+  const m = {};
+  for (const r of ROWS) {
+    m[r.employee_id] = m[r.employee_id] || { p: 0, v: 0 };
+    if (r.status === 'PENDENTE') m[r.employee_id].p++;
+    if (r.status === 'VENCIDO') m[r.employee_id].v++;
+  }
+  return m;
+}
+
+function renderCadColab() {
+  const counts = empPendCounts();
+  const render = (filter) => {
+    const list = DS.employees.filter(e => !filter || e.name.toLowerCase().includes(filter));
+    $('colabBody').innerHTML = list.map(e => {
+      const c = counts[e.id] || { p: 0, v: 0 };
+      const desligado = e.demissao && e.demissao <= DS.today;
+      return `<tr style="${desligado ? 'opacity:.55' : ''}">
+        <td>${esc(e.name)}</td><td>${esc(e.company_short || e.company_name)}</td><td>${esc(e.cargo_name || '—')}</td>
+        <td>${brDate(e.admissao)}</td><td>${e.demissao ? brDate(e.demissao) : '—'}</td>
+        <td>${desligado ? '<span class="badge vencido">DESLIGADO</span>' : '<span class="badge valido">ATIVO</span>'}</td>
+        <td style="text-align:center">${c.p}</td><td style="text-align:center">${c.v}</td>
+        <td style="white-space:nowrap">
+          <button class="btn-mini" onclick="editEmployee(${e.id})">Editar</button>
+          <button class="btn-mini" onclick="openLancamentos(${e.id})">Lançamentos</button>
+          ${ME.role === 'admin' ? `<button class="btn-mini danger" onclick="delEmployee(${e.id})">Excluir</button>` : ''}
+        </td></tr>`;
+    }).join('') || '<tr><td colspan="9" class="empty">Nenhum colaborador</td></tr>';
+  };
+  $('cadContent').innerHTML = `
+    <div class="toolbar">
+      <input type="search" id="colabSearch" placeholder="Buscar colaborador…">
+      <button class="btn-primary" onclick="editEmployee(null)">+ Novo colaborador</button>
+    </div>
+    <div class="card"><div class="tbl-wrap" style="max-height:600px"><table class="tbl"><thead><tr>
+      <th>Nome</th><th>Empresa</th><th>Cargo</th><th>Admissão</th><th>Demissão</th><th>Status</th>
+      <th>Pend.</th><th>Venc.</th><th>Ações</th>
+    </tr></thead><tbody id="colabBody"></tbody></table></div></div>`;
+  render('');
+  $('colabSearch').addEventListener('input', (e) => render(e.target.value.trim().toLowerCase()));
+}
+
+window.editEmployee = (id) => {
+  const e = id ? DS.employees.find(x => x.id === id) : null;
+  const compOpts = DS.companies.map(c => `<option value="${c.id}" ${e && e.company_id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+  openModal(e ? 'Editar colaborador' : 'Novo colaborador', `
+    <label>Nome completo</label><input id="mNome" value="${esc(e?.name || '')}">
+    <div class="row2">
+      <div><label>Empresa</label><select id="mEmpresa">${compOpts}</select></div>
+      <div><label>Cargo</label><select id="mCargo"></select></div>
+    </div>
+    <div class="row2">
+      <div><label>Admissão</label><input type="date" id="mAdmissao" value="${e?.admissao || ''}"></div>
+      <div><label>Demissão (deixe vazio se ativo)</label><input type="date" id="mDemissao" value="${e?.demissao || ''}"></div>
+    </div>`,
+    [{ label: 'Salvar', cls: 'btn-primary', onClick: async () => {
+      const body = {
+        name: $('mNome').value, company_id: Number($('mEmpresa').value),
+        cargo_id: $('mCargo').value ? Number($('mCargo').value) : null,
+        admissao: $('mAdmissao').value || null, demissao: $('mDemissao').value || null,
+      };
+      if (e) await api('/api/employees/' + e.id, { method: 'PUT', body: JSON.stringify(body) });
+      else await api('/api/employees', { method: 'POST', body: JSON.stringify(body) });
+      closeModal(); toast('Colaborador salvo'); await loadAll();
+    } }]);
+  const fillCargos = () => {
+    const cid = Number($('mEmpresa').value);
+    $('mCargo').innerHTML = '<option value="">— sem cargo —</option>' + DS.cargos.filter(c => c.company_id === cid)
+      .map(c => `<option value="${c.id}" ${e && e.cargo_id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+  };
+  fillCargos();
+  $('mEmpresa').addEventListener('change', fillCargos);
+};
+
+window.delEmployee = async (id) => {
+  const e = DS.employees.find(x => x.id === id);
+  if (!confirm('Excluir DEFINITIVAMENTE ' + e.name + ' e todos os seus lançamentos?\n\nSe o colaborador foi desligado, prefira registrar a data de demissão em Editar.')) return;
+  await api('/api/employees/' + id, { method: 'DELETE' });
+  toast('Colaborador excluído'); await loadAll();
+};
+
+function renderCadEmpresas() {
+  $('cadContent').innerHTML = `
+    <div class="toolbar"><button class="btn-primary" onclick="editCompany(null)">+ Nova empresa</button>
+      <span class="hint">O nome curto é o que aparece nos painéis e relatórios; a ordem define a sequência de exibição.</span></div>
+    <div class="card"><div class="tbl-wrap"><table class="tbl"><thead><tr>
+      <th>Razão social</th><th>Nome curto</th><th style="text-align:center">Ordem</th>
+      <th style="text-align:center">Colab.</th><th style="text-align:center">Cargos</th><th>Ações</th></tr></thead><tbody>
+      ${DS.companies.map(c => {
+        const nE = DS.employees.filter(e => e.company_id === c.id).length;
+        const nC = DS.cargos.filter(g => g.company_id === c.id).length;
+        return `<tr><td>${esc(c.name)}</td><td><b>${esc(c.short_name || '—')}</b></td>
+          <td style="text-align:center">${c.sort_order}</td>
+          <td style="text-align:center">${nE}</td><td style="text-align:center">${nC}</td>
+          <td style="white-space:nowrap"><button class="btn-mini" onclick="editCompany(${c.id})">Editar</button>
+          ${ME.role === 'admin' ? `<button class="btn-mini danger" onclick="delCompany(${c.id})">Excluir</button>` : ''}</td></tr>`;
+      }).join('')}
+    </tbody></table></div></div>`;
+}
+window.editCompany = (id) => {
+  const c = id ? DS.companies.find(x => x.id === id) : null;
+  openModal(c ? 'Editar empresa' : 'Nova empresa', `
+    <label>Razão social</label><input id="mNome" value="${esc(c?.name || '')}">
+    <div class="row2">
+      <div><label>Nome curto (exibido nos painéis)</label><input id="mCurto" value="${esc(c?.short_name || '')}" placeholder="ex.: Riva Stones"></div>
+      <div><label>Ordem de exibição</label><input type="number" id="mOrdem" value="${c?.sort_order ?? 100}"></div>
+    </div>`,
+    [{ label: 'Salvar', cls: 'btn-primary', onClick: async () => {
+      const body = { name: $('mNome').value, short_name: $('mCurto').value || null, sort_order: Number($('mOrdem').value) || 100 };
+      if (c) await api('/api/companies/' + c.id, { method: 'PUT', body: JSON.stringify(body) });
+      else await api('/api/companies', { method: 'POST', body: JSON.stringify(body) });
+      closeModal(); toast('Empresa salva'); await loadAll();
+    } }]);
+};
+window.delCompany = async (id) => {
+  if (!confirm('Excluir esta empresa? Só é possível se não houver colaboradores vinculados.')) return;
+  await api('/api/companies/' + id, { method: 'DELETE' });
+  toast('Empresa excluída'); await loadAll();
+};
+
+function renderCadCargos() {
+  const trailsByCargo = {};
+  for (const t of DS.trails) (trailsByCargo[t.cargo_id] = trailsByCargo[t.cargo_id] || []).push(t.training_id);
+  const cargoById = new Map(DS.cargos.map(c => [c.id, c]));
+  const render = (filter) => {
+    const list = DS.cargos.filter(c => !filter || c.name.toLowerCase().includes(filter));
+    $('cargoBody').innerHTML = list.map(c => {
+      const comp = DS.companies.find(x => x.id === c.company_id);
+      const own = (trailsByCargo[c.id] || []).length;
+      const src = c.trail_source_id ? cargoById.get(c.trail_source_id) : null;
+      const inherited = !own && src ? (trailsByCargo[src.id] || []).length : 0;
+      const nE = DS.employees.filter(e => e.cargo_id === c.id).length;
+      let trailCell;
+      if (own) trailCell = `<b>${own}</b> treinamentos <span class="hint">(própria)</span>`;
+      else if (inherited) trailCell = `<b>${inherited}</b> treinamentos <span class="hint">(herda de ${esc(src.name)})</span>`;
+      else trailCell = '<span class="badge vencido">SEM TRILHA</span>';
+      return `<tr><td>${esc(c.name)}</td><td>${esc(comp?.name || '')}</td><td>${trailCell}</td><td style="text-align:center">${nE}</td>
+        <td style="white-space:nowrap"><button class="btn-mini" onclick="editCargo(${c.id})">Editar trilha</button>
+        ${ME.role === 'admin' ? `<button class="btn-mini danger" onclick="delCargo(${c.id})">Excluir</button>` : ''}</td></tr>`;
+    }).join('') || '<tr><td colspan="5" class="empty">Nenhum cargo</td></tr>';
+  };
+  $('cadContent').innerHTML = `
+    <div class="toolbar">
+      <input type="search" id="cargoSearch" placeholder="Buscar cargo…">
+      <button class="btn-primary" onclick="editCargo(null)">+ Novo cargo</button>
+      <span class="hint">A trilha define quais treinamentos são obrigatórios para o cargo — é ela que gera os "pendentes".<br>
+      Cargos com nível (FIOLISTA III) herdam automaticamente a trilha do cargo-base (FIOLISTA).</span></div>
+    <div class="card"><div class="tbl-wrap" style="max-height:600px"><table class="tbl"><thead><tr>
+      <th>Cargo</th><th>Empresa</th><th>Trilha</th><th>Colab.</th><th>Ações</th></tr></thead><tbody id="cargoBody"></tbody></table></div></div>`;
+  render('');
+  $('cargoSearch').addEventListener('input', (e) => render(e.target.value.trim().toLowerCase()));
+}
+window.editCargo = (id) => {
+  const c = id ? DS.cargos.find(x => x.id === id) : null;
+  const own = new Set(DS.trails.filter(t => t.cargo_id === id).map(t => t.training_id));
+  const src = c && c.trail_source_id ? DS.cargos.find(x => x.id === c.trail_source_id) : null;
+  const inherited = src ? new Set(DS.trails.filter(t => t.cargo_id === src.id).map(t => t.training_id)) : new Set();
+  const shown = own.size ? own : inherited;
+  const compOpts = DS.companies.map(x => `<option value="${x.id}" ${c && c.company_id === x.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
+  const srcOpts = DS.cargos.filter(x => x.id !== id && DS.trails.some(t => t.cargo_id === x.id))
+    .map(x => `<option value="${x.id}" ${src && src.id === x.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
+  openModal(c ? 'Editar cargo e trilha' : 'Novo cargo', `
+    <label>Nome do cargo</label><input id="mNome" value="${esc(c?.name || '')}">
+    <label>Empresa</label><select id="mEmpresa" ${c ? 'disabled' : ''}>${compOpts}</select>
+    ${c ? `<label>Herdar trilha de outro cargo</label>
+      <select id="mSrc"><option value="">— não herdar (usar trilha própria abaixo) —</option>${srcOpts}</select>
+      ${!own.size && src ? `<p class="hint">Este cargo herda a trilha de <b>${esc(src.name)}</b>. Marcar/desmarcar treinamentos abaixo cria uma trilha própria e desfaz a herança.</p>` : ''}` : ''}
+    <label>Trilha de treinamentos obrigatórios</label>
+    <div class="checklist">${DS.trainings.map(t =>
+      `<label><input type="checkbox" class="trailChk" value="${t.id}" ${shown.has(t.id) ? 'checked' : ''}> ${esc(t.name)}</label>`).join('')}</div>`,
+    [{ label: 'Salvar', cls: 'btn-primary', onClick: async () => {
+      const srcVal = $('mSrc') ? $('mSrc').value : '';
+      const body = { name: $('mNome').value };
+      if (srcVal) {
+        body.trail_source_id = Number(srcVal);
+        body.trail_training_ids = [];   // herança manda: limpa a trilha própria
+      } else {
+        body.trail_source_id = null;
+        body.trail_training_ids = [...document.querySelectorAll('.trailChk:checked')].map(x => Number(x.value));
+      }
+      if (c) {
+        await api('/api/cargos/' + c.id, { method: 'PUT', body: JSON.stringify(body) });
+      } else {
+        const r = await api('/api/cargos', { method: 'POST', body: JSON.stringify({ name: $('mNome').value, company_id: Number($('mEmpresa').value) }) });
+        await api('/api/cargos/' + r.id, { method: 'PUT', body: JSON.stringify({ trail_training_ids: body.trail_training_ids }) });
+      }
+      closeModal(); toast('Cargo salvo'); await loadAll();
+    } }]);
+};
+window.delCargo = async (id) => {
+  if (!confirm('Excluir este cargo? Só é possível se nenhum colaborador o utilizar.')) return;
+  await api('/api/cargos/' + id, { method: 'DELETE' });
+  toast('Cargo excluído'); await loadAll();
+};
+
+function renderCadTreinamentos() {
+  $('cadContent').innerHTML = `
+    <div class="toolbar"><button class="btn-primary" onclick="editTraining(null)">+ Novo treinamento</button></div>
+    <div class="card"><div class="tbl-wrap" style="max-height:600px"><table class="tbl"><thead><tr>
+      <th>Treinamento</th><th>CH formação</th><th>CH reciclagem</th><th>Validade (meses)</th>
+      <th>Custo formação</th><th>Custo reciclagem</th><th>Ações</th></tr></thead><tbody>
+      ${DS.trainings.map(t => `<tr>
+        <td>${esc(t.name)}</td>
+        <td style="text-align:center">${t.ch_formacao != null ? fmtH(t.ch_formacao) + ' h' : '—'}</td>
+        <td style="text-align:center">${t.ch_reciclagem != null ? fmtH(t.ch_reciclagem) + ' h' : '—'}</td>
+        <td style="text-align:center">${t.validade_meses ?? '—'}</td>
+        <td style="text-align:center">${t.custo_formacao ? fmtMoney(t.custo_formacao) : '—'}</td>
+        <td style="text-align:center">${t.custo_reciclagem ? fmtMoney(t.custo_reciclagem) : '—'}</td>
+        <td style="white-space:nowrap"><button class="btn-mini" onclick="editTraining(${t.id})">Editar</button>
+        ${ME.role === 'admin' ? `<button class="btn-mini danger" onclick="delTraining(${t.id})">Excluir</button>` : ''}</td></tr>`).join('')}
+    </tbody></table></div></div>`;
+}
+window.editTraining = (id) => {
+  const t = id ? DS.trainings.find(x => x.id === id) : null;
+  openModal(t ? 'Editar treinamento' : 'Novo treinamento', `
+    <label>Nome (ex.: NR-35 TRABALHO EM ALTURA)</label><input id="mNome" value="${esc(t?.name || '')}">
+    <div class="row2">
+      <div><label>CH formação (horas)</label><input type="number" step="0.5" id="mChF" value="${t?.ch_formacao ?? ''}"></div>
+      <div><label>CH reciclagem (horas)</label><input type="number" step="0.5" id="mChR" value="${t?.ch_reciclagem ?? ''}"></div>
+    </div>
+    <div class="row2">
+      <div><label>Validade (meses)</label><input type="number" id="mVal" value="${t?.validade_meses ?? ''}"></div>
+      <div><label>&nbsp;</label><span class="hint">A validade preenche o vencimento automaticamente ao lançar.</span></div>
+    </div>
+    <div class="row2">
+      <div><label>Custo formação por pessoa (R$)</label><input type="number" step="0.01" id="mCF" value="${t?.custo_formacao || ''}"></div>
+      <div><label>Custo reciclagem por pessoa (R$)</label><input type="number" step="0.01" id="mCR" value="${t?.custo_reciclagem || ''}"></div>
+    </div>
+    <label>Critério / observação</label><textarea id="mCrit" rows="3">${esc(t?.criterio || '')}</textarea>
+    <label>Base / fonte</label><input id="mFonte" value="${esc(t?.fonte || '')}">`,
+    [{ label: 'Salvar', cls: 'btn-primary', onClick: async () => {
+      const num = (v) => v === '' ? null : Number(v);
+      const body = {
+        name: $('mNome').value, ch_formacao: num($('mChF').value), ch_reciclagem: num($('mChR').value),
+        validade_meses: num($('mVal').value), custo_formacao: num($('mCF').value) ?? 0,
+        custo_reciclagem: num($('mCR').value) ?? 0, criterio: $('mCrit').value || null, fonte: $('mFonte').value || null,
+      };
+      if (t) await api('/api/trainings/' + t.id, { method: 'PUT', body: JSON.stringify(body) });
+      else await api('/api/trainings', { method: 'POST', body: JSON.stringify(body) });
+      closeModal(); toast('Treinamento salvo'); await loadAll();
+    } }]);
+};
+window.delTraining = async (id) => {
+  if (!confirm('Excluir este treinamento? Só é possível se não houver lançamentos.')) return;
+  await api('/api/trainings/' + id, { method: 'DELETE' });
+  toast('Treinamento excluído'); await loadAll();
+};
+
+// --- Lançamentos ---
+function renderCadLancamentos() {
+  $('cadContent').innerHTML = `
+    <div class="toolbar">
+      <input type="search" id="lancSearch" placeholder="Digite o nome do colaborador…" style="min-width:300px">
+      <button class="btn-primary" onclick="newRecordQuick()">+ Novo lançamento</button>
+      <span class="hint">O lançamento registra a realização de um treinamento; o vencimento é calculado pela validade da matriz.</span>
+    </div>
+    <div id="lancResults"></div>`;
+  $('lancSearch').addEventListener('input', (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    if (q.length < 2) { $('lancResults').innerHTML = '<div class="empty">Digite ao menos 2 letras para buscar</div>'; return; }
+    const list = DS.employees.filter(x => x.name.toLowerCase().includes(q)).slice(0, 12);
+    $('lancResults').innerHTML = list.map(x =>
+      `<div class="card" style="margin-bottom:10px;display:flex;align-items:center;gap:14px">
+        <div style="flex:1"><b>${esc(x.name)}</b><div class="hint">${esc(x.cargo_name || '—')} · ${esc(x.company_short || x.company_name)}</div></div>
+        <button class="btn-navy" onclick="openLancamentos(${x.id})">Ver lançamentos</button>
+      </div>`).join('') || '<div class="empty">Nenhum colaborador encontrado</div>';
+  });
+  $('lancResults').innerHTML = '<div class="empty">Digite o nome de um colaborador para gerenciar os lançamentos dele</div>';
+}
+
+window.newRecordQuick = () => openRecordModal(null, null);
+
+window.openLancamentos = async (empId) => {
+  const e = DS.employees.find(x => x.id === empId);
+  const [recs, reqs] = await Promise.all([api('/api/records/' + empId), api('/api/requirements/' + empId)]);
+  const reqSet = new Set(reqs.map(r => r.training_id));
+  const mine = ROWS.filter(r => r.employee_id === empId)
+    .sort((a, b) => a.trName.localeCompare(b.trName, 'pt-BR'));
+  const recsByTraining = {};
+  for (const r of recs) (recsByTraining[r.training_id] = recsByTraining[r.training_id] || []).push(r);
+
+  const situacao = mine.map(g => {
+    const hist = recsByTraining[g.training_id] || [];
+    const origem = reqSet.has(g.training_id) ? 'individual' : (g.required ? 'trilha' : 'avulso');
+    return `<tr>
+      <td>${esc(g.trName)}<div class="hint">exigência: ${origem}${hist.length > 1 ? ' · ' + hist.length + ' registros' : ''}</div></td>
+      <td>${brDate(g.realizacao) || '—'}</td><td>${brDate(g.vencimento) || '—'}</td>
+      <td><span class="badge ${STATUS_CLASS[g.status]}">${g.status}</span></td>
+      <td style="white-space:nowrap">
+        ${g.record_id ? `<button class="btn-mini" onclick="editRecord(${g.record_id}, ${empId})">Editar</button>
+                         <button class="btn-mini danger" onclick="delRecord(${g.record_id}, ${empId})">Excluir</button>`
+                      : `<button class="btn-mini" onclick="openRecordModal(${empId}, null, ${g.training_id})">Lançar</button>`}
+        ${reqSet.has(g.training_id) ? `<button class="btn-mini danger" title="Remover a exigência individual deste treinamento" onclick="delRequirement(${empId}, ${g.training_id})">Não exigir</button>` : ''}
+      </td></tr>`;
+  }).join('') || '<tr><td colspan="5" class="empty">Nenhum treinamento exigido nem lançado</td></tr>';
+
+  openModal('Treinamentos — ' + e.name, `
+    <div class="hint" style="margin-bottom:10px">${esc(e.cargo_name || '—')} · ${esc(e.company_short || e.company_name)}${e.admissao ? ' · admitido em ' + brDate(e.admissao) : ''}</div>
+    <div class="tbl-wrap" style="max-height:340px"><table class="tbl"><thead><tr>
+      <th>Treinamento</th><th>Realização</th><th>Vencimento</th><th>Situação</th><th>Ações</th></tr></thead><tbody>
+      ${situacao}</tbody></table></div>
+    <p class="hint" style="margin-top:10px">A exigência vem da <b>trilha</b> do cargo ou é <b>individual</b> (cobrada só desta pessoa).
+    "Não exigir" remove apenas a exigência individual; se o treinamento estiver na trilha do cargo, ele continua sendo cobrado.</p>`,
+    [{ label: '+ Novo lançamento', cls: 'btn-primary', onClick: () => openRecordModal(empId, null) }]);
+};
+
+window.delRequirement = async (empId, trainingId) => {
+  if (!confirm('Remover a exigência individual deste treinamento para este colaborador?')) return;
+  await api('/api/requirements/' + empId + '/' + trainingId, { method: 'DELETE' });
+  toast('Exigência removida'); await loadAll(); openLancamentos(empId);
+};
+
+window.editRecord = async (recId, empId) => {
+  const recs = await api('/api/records/' + empId);
+  const rec = recs.find(r => r.id === recId);
+  openRecordModal(empId, rec);
+};
+window.delRecord = async (recId, empId) => {
+  if (!confirm('Excluir este lançamento?')) return;
+  await api('/api/records/' + recId, { method: 'DELETE' });
+  toast('Lançamento excluído'); await loadAll(); openLancamentos(empId);
+};
+
+window.openRecordModal = function openRecordModal(empId, rec, preTrainingId = null) {
+  const empOpts = DS.employees.map(e =>
+    `<option value="${e.id}" ${empId === e.id ? 'selected' : ''}>${esc(e.name)} — ${esc(e.company_short || e.company_name)}</option>`).join('');
+  const selTr = rec ? rec.training_id : preTrainingId;
+  const trOpts = DS.trainings.map(t =>
+    `<option value="${t.id}" ${selTr === t.id ? 'selected' : ''}>${esc(t.name)}</option>`).join('');
+  openModal(rec ? 'Editar lançamento' : 'Novo lançamento', `
+    <label>Colaborador</label><select id="mEmp" ${rec ? 'disabled' : ''}><option value="">— selecione —</option>${empOpts}</select>
+    <label>Treinamento</label><select id="mTr" ${rec ? 'disabled' : ''}>${trOpts}</select>
+    <div class="row2">
+      <div><label>Data de realização</label><input type="date" id="mReal" value="${rec?.realizacao || ''}"></div>
+      <div><label>Vencimento (vazio = automático)</label><input type="date" id="mVenc" value="${rec?.vencimento || ''}"></div>
+    </div>
+    <label>Observação</label><input id="mObs" value="${esc(rec?.obs || '')}">`,
+    [{ label: 'Salvar', cls: 'btn-primary', onClick: async () => {
+      if (rec) {
+        await api('/api/records/' + rec.id, { method: 'PUT', body: JSON.stringify({
+          realizacao: $('mReal').value || null, vencimento: $('mVenc').value || null, obs: $('mObs').value || null }) });
+      } else {
+        if (!$('mEmp').value) return toast('Selecione o colaborador', true);
+        await api('/api/records', { method: 'POST', body: JSON.stringify({
+          employee_id: Number($('mEmp').value), training_id: Number($('mTr').value),
+          realizacao: $('mReal').value, vencimento: $('mVenc').value || null, obs: $('mObs').value || null }) });
+      }
+      closeModal(); toast('Lançamento salvo'); await loadAll();
+    } }]);
+};
+
+// ===== Importar / Exportar =====
+function renderImportar() {
+  $('tab-importar').innerHTML = `
+    <div class="grid cols-2">
+      <div class="card">
+        <h3>Exportar planilha</h3>
+        <p class="hint">Gera um arquivo Excel no mesmo formato da planilha atual, com as abas <b>Base de Dados</b> (incluindo linhas PENDENTE), <b>Matriz de C.H.</b> e <b>Trilha por Cargo</b>, refletindo a posição de hoje.</p>
+        <br><a class="btn-primary" style="text-decoration:none;display:inline-block" href="/api/export">⬇ Baixar Balanço Normativos (.xlsx)</a>
+      </div>
+      <div class="card">
+        <h3>Importar planilha</h3>
+        <p class="hint">Envie um arquivo no formato do "Balanço Normativos" (abas Base de Dados, Matriz de C.H. e Trilha por Cargo). Colaboradores, treinamentos e lançamentos novos são adicionados; os existentes são atualizados. Linhas PENDENTE não criam lançamento.</p>
+        <br>
+        <input type="file" id="impFile" accept=".xlsx,.xls">
+        <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px;text-transform:none;letter-spacing:0">
+          <input type="checkbox" id="impClear" style="width:auto;accent-color:var(--orange)"> Substituir todos os lançamentos (apaga os atuais antes de importar)
+        </label>
+        <br><button class="btn-navy" id="btnImport">⬆ Importar arquivo</button>
+        <div id="impResult" class="hint" style="margin-top:12px"></div>
+      </div>
+    </div>`;
+  $('btnImport').addEventListener('click', async () => {
+    const f = $('impFile').files[0];
+    if (!f) return toast('Selecione um arquivo .xlsx', true);
+    if ($('impClear').checked && !confirm('Tem certeza? TODOS os lançamentos atuais serão apagados e substituídos pelos da planilha.')) return;
+    const fd = new FormData();
+    fd.append('file', f);
+    fd.append('clear', $('impClear').checked ? '1' : '0');
+    $('impResult').textContent = 'Importando…';
+    const res = await fetch('/api/import', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) { $('impResult').textContent = data.error || 'Falha na importação'; return; }
+    $('impResult').innerHTML = `✔ Importação concluída — ${fmtN(data.stats.lancamentos)} lançamentos novos · ${fmtN(data.stats.empresas)} empresas · ${fmtN(data.stats.cargos)} cargos na base.`;
+    toast('Planilha importada com sucesso');
+    await loadAll();
+  });
+}
+
+// ===== Usuários =====
+async function renderUsuarios() {
+  const { users, teams } = await api('/api/users');
+  const teamCount = {};
+  for (const t of teams) teamCount[t.user_id] = (teamCount[t.user_id] || 0) + 1;
+  $('tab-usuarios').innerHTML = `
+    <div class="admin-head"><h2>Usuários e Acessos</h2>
+      <button class="btn-primary" onclick="editUser(null)">+ Novo usuário</button></div>
+    <div class="card">
+      <p class="hint" style="margin-bottom:12px">
+        <b>Administradora</b>: controle total. · <b>Supervisor</b>: configura cadastros, lançamentos e usuários (exceto administradores). ·
+        <b>Gestor</b>: visualiza todos os painéis. · <b>Líder</b>: visualiza apenas o painel da equipe atribuída a ele.
+      </p>
+      <div class="tbl-wrap"><table class="tbl"><thead><tr>
+        <th>Nome</th><th>E-mail</th><th>Perfil</th><th>Equipe</th><th>Status</th><th>Ações</th></tr></thead><tbody>
+        ${users.map(u => `<tr>
+          <td>${esc(u.name)}</td><td>${esc(u.email)}</td>
+          <td><span class="badge role ${u.role}">${ROLE_LABEL[u.role]}</span></td>
+          <td>${u.role === 'lider' ? (teamCount[u.id] || 0) + ' colaboradores' : '—'}</td>
+          <td>${u.active ? '<span class="badge valido">ATIVO</span>' : '<span class="badge vencido">INATIVO</span>'}</td>
+          <td style="white-space:nowrap">
+            <button class="btn-mini" onclick='editUser(${JSON.stringify(u)}, ${JSON.stringify(teams.filter(t => t.user_id === u.id).map(t => t.employee_id))})'>Editar</button>
+            ${ME.role === 'admin' && u.id !== ME.id ? `<button class="btn-mini danger" onclick="delUser(${u.id})">Excluir</button>` : ''}
+          </td></tr>`).join('')}
+      </tbody></table></div>
+    </div>`;
+}
+
+window.editUser = (u, teamIds = []) => {
+  const isNew = !u;
+  const teamSet = new Set(teamIds);
+  const roleOpts = ['admin', 'supervisor', 'gestor', 'lider']
+    .filter(r => ME.role === 'admin' || r !== 'admin')
+    .map(r => `<option value="${r}" ${u && u.role === r ? 'selected' : ''}>${ROLE_LABEL[r]}</option>`).join('');
+  openModal(isNew ? 'Novo usuário' : 'Editar usuário — ' + u.name, `
+    <label>Nome</label><input id="mNome" value="${esc(u?.name || '')}">
+    <label>E-mail (login)</label><input type="email" id="mEmail" value="${esc(u?.email || '')}">
+    <div class="row2">
+      <div><label>Perfil de acesso</label><select id="mRole">${roleOpts}</select></div>
+      <div><label>${isNew ? 'Senha' : 'Nova senha (vazio = manter)'}</label><input type="text" id="mSenha" placeholder="mínimo 6 caracteres"></div>
+    </div>
+    ${!isNew ? `<label style="display:flex;align-items:center;gap:8px;text-transform:none"><input type="checkbox" id="mAtivo" style="width:auto;accent-color:var(--orange)" ${u.active ? 'checked' : ''}> Usuário ativo (desmarque para bloquear o acesso)</label>` : ''}
+    <div id="teamBox" style="display:none">
+      <label>Equipe do líder (colaboradores que ele enxerga)</label>
+      <input type="search" id="teamSearch" placeholder="filtrar…" style="margin-bottom:6px">
+      <div class="checklist" id="teamList"></div>
+    </div>`,
+    [{ label: 'Salvar', cls: 'btn-primary', onClick: async () => {
+      const role = $('mRole').value;
+      const body = { name: $('mNome').value, email: $('mEmail').value, role };
+      if ($('mSenha').value) body.password = $('mSenha').value;
+      if (!isNew) body.active = $('mAtivo').checked ? 1 : 0;
+      if (role === 'lider') body.team = [...document.querySelectorAll('.teamChk:checked')].map(x => Number(x.value));
+      if (isNew) {
+        if (!body.password) return toast('Defina uma senha', true);
+        await api('/api/users', { method: 'POST', body: JSON.stringify(body) });
+      } else {
+        await api('/api/users/' + u.id, { method: 'PUT', body: JSON.stringify(body) });
+      }
+      closeModal(); toast('Usuário salvo'); renderUsuarios();
+    } }]);
+  const renderTeam = (q = '') => {
+    $('teamList').innerHTML = DS.employees
+      .filter(e => !q || e.name.toLowerCase().includes(q))
+      .map(e => `<label><input type="checkbox" class="teamChk" value="${e.id}" ${teamSet.has(e.id) ? 'checked' : ''}> ${esc(e.name)} <span style="color:var(--muted)">· ${esc(e.company_short || e.company_name)}</span></label>`).join('');
+    document.querySelectorAll('.teamChk').forEach(chk => chk.addEventListener('change', () => {
+      if (chk.checked) teamSet.add(Number(chk.value)); else teamSet.delete(Number(chk.value));
+    }));
+  };
+  const syncRole = () => {
+    $('teamBox').style.display = $('mRole').value === 'lider' ? '' : 'none';
+    if ($('mRole').value === 'lider') renderTeam();
+  };
+  $('mRole').addEventListener('change', syncRole);
+  $('teamSearch').addEventListener('input', (e) => renderTeam(e.target.value.trim().toLowerCase()));
+  syncRole();
+};
+window.delUser = async (id) => {
+  if (!confirm('Excluir este usuário? Ele perderá o acesso imediatamente.')) return;
+  await api('/api/users/' + id, { method: 'DELETE' });
+  toast('Usuário excluído'); renderUsuarios();
+};
+
+// ---------- modal / toast ----------
+function openModal(title, bodyHTML, buttons = []) {
+  $('modalTitle').textContent = title;
+  $('modalBody').innerHTML = bodyHTML;
+  $('modalFoot').innerHTML = '';
+  const cancel = document.createElement('button');
+  cancel.className = 'btn-ghost'; cancel.textContent = 'Cancelar';
+  cancel.addEventListener('click', closeModal);
+  $('modalFoot').appendChild(cancel);
+  for (const b of buttons) {
+    const btn = document.createElement('button');
+    btn.className = b.cls || 'btn-primary'; btn.textContent = b.label;
+    btn.addEventListener('click', async () => {
+      try { await b.onClick(); } catch (e) { toast(e.message, true); }
+    });
+    $('modalFoot').appendChild(btn);
+  }
+  $('modalBack').classList.add('open');
+}
+function closeModal() { $('modalBack').classList.remove('open'); }
+$('modalClose').addEventListener('click', closeModal);
+$('modalBack').addEventListener('click', (e) => { if (e.target === $('modalBack')) closeModal(); });
+
+let toastTimer = null;
+function toast(msg, isError = false) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (isError ? ' error' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 3500);
+}
+
+// ---------- eventos globais ----------
+document.querySelectorAll('#mainTabs button').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('#mainTabs button').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  currentTab = b.dataset.tab;
+  renderTab();
+}));
+['fEmpresa', 'fCargo', 'fTreinamento', 'fSituacao', 'fFaixa'].forEach(id =>
+  $(id).addEventListener('change', renderTab));
+$('fBusca').addEventListener('input', () => renderTab());
+$('btnLimpar').addEventListener('click', () => {
+  ['fEmpresa', 'fCargo', 'fTreinamento', 'fSituacao', 'fFaixa'].forEach(id => $(id).value = '');
+  $('fBusca').value = '';
+  renderTab();
+});
+$('btnLogout').addEventListener('click', async () => { await api('/api/logout', { method: 'POST' }); location.href = '/login'; });
+$('btnMyPassword').addEventListener('click', () => {
+  openModal('Trocar minha senha', `
+    <label>Senha atual</label><input type="password" id="mAtual">
+    <label>Nova senha (mínimo 6 caracteres)</label><input type="password" id="mNova">`,
+    [{ label: 'Alterar', cls: 'btn-primary', onClick: async () => {
+      await api('/api/me/password', { method: 'POST', body: JSON.stringify({ current: $('mAtual').value, next: $('mNova').value }) });
+      closeModal(); toast('Senha alterada com sucesso');
+    } }]);
+});
+
+loadAll().catch(e => { console.error(e); });

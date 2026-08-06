@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: painel-treinamentos-riva
+    runtime: docker
+    plan: starter          # o plano gratuito NÃO permite disco persistente
+    region: virginia       # região mais próxima do Brasil
+    healthCheckPath: /login
+    disk:
+      name: dados
+      mountPath: /app/data # onde vive o painel.db — sem isso os dados se perdem
+      sizeGB: 1
+    envVars:
+      - key: BEHIND_PROXY
+        value: "1"
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: ADMIN_EMAIL
+        sync: false        # preencher no painel da Render
+      - key: ADMIN_PASSWORD
+        sync: false        # preencher no painel da Render, nunca no arquivo

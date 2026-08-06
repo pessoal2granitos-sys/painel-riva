@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Entrar — Painel de Treinamentos Riva Stones</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="icon" href="/img/logo.svg">
+</head>
+<body class="login-body">
+  <div class="login-card">
+    <div class="logo-wrap"><img src="/img/logo.svg" alt="Riva Stones"></div>
+    <h1>Painel de Treinamentos Normativos</h1>
+    <p class="sub">Riva Stones · Mineração Vista Linda · Granriva Granitos · Ágape Distribuição</p>
+    <form id="loginForm">
+      <label for="email">E-mail</label>
+      <input type="email" id="email" autocomplete="username" required>
+      <label for="password">Senha</label>
+      <input type="password" id="password" autocomplete="current-password" required>
+      <button class="btn-primary" type="submit">Entrar</button>
+      <div class="login-error" id="err"></div>
+    </form>
+  </div>
+  <script>
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const err = document.getElementById('err');
+      err.style.display = 'none';
+      const res = await fetch('/api/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.value, password: password.value })
+      });
+      if (res.ok) { location.href = '/'; }
+      else {
+        const data = await res.json().catch(() => ({}));
+        err.textContent = data.error || 'Falha no login';
+        err.style.display = 'block';
+      }
+    });
+  </script>
+</body>
+</html>
