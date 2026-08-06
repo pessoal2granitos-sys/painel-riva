@@ -33,11 +33,24 @@ app.use((req, res, next) => {
   next();
 });
 
-// ---- Sessão (segredo persistido em data/secret.txt) ----
-const secretPath = path.join(__dirname, 'data', 'secret.txt');
-if (!fs.existsSync(secretPath)) fs.writeFileSync(secretPath, crypto.randomBytes(32).toString('hex'));
+// ---- Sessão ----
+// Na hospedagem o segredo vem de SESSION_SECRET; localmente é gerado uma vez e
+// guardado em data/secret.txt para as sessões sobreviverem a reinícios.
+function sessionSecret() {
+  if (process.env.SESSION_SECRET) return process.env.SESSION_SECRET;
+  const secretPath = path.join(__dirname, 'data', 'secret.txt');
+  try {
+    if (!fs.existsSync(secretPath)) fs.writeFileSync(secretPath, crypto.randomBytes(32).toString('hex'));
+    return fs.readFileSync(secretPath, 'utf8');
+  } catch (e) {
+    console.warn('Não foi possível gravar data/secret.txt (' + e.code + '). ' +
+      'Usando segredo temporário — defina SESSION_SECRET para manter as sessões entre reinícios.');
+    return crypto.randomBytes(32).toString('hex');
+  }
+}
+
 app.use(session({
-  secret: process.env.SESSION_SECRET || fs.readFileSync(secretPath, 'utf8'),
+  secret: sessionSecret(),
   resave: false,
   saveUninitialized: false,
   cookie: { httpOnly: true, sameSite: 'lax', secure: BEHIND_PROXY, maxAge: 12 * 60 * 60 * 1000 },
