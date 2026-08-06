@@ -13,11 +13,12 @@
   "license": "UNLICENSED",
   "type": "commonjs",
   "dependencies": {
+    "@libsql/client": "^0.17.4",
     "bcryptjs": "^3.0.3",
     "chart.js": "^4.5.1",
+    "cookie-session": "^2.1.1",
     "express": "^5.2.1",
-    "express-session": "^1.19.0",
     "multer": "^2.2.0",
-    "xlsx": "^0.18.5"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   }
 }

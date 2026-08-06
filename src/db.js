@@ -1,16 +1,56 @@
 'use strict';
-const { DatabaseSync } = require('node:sqlite');
+// Banco de dados. Local: arquivo SQLite em data/painel.db.
+// Hospedagem: Turso (SQLite gerenciado) via TURSO_DATABASE_URL + TURSO_AUTH_TOKEN.
+// O dialeto SQL é o mesmo nos dois casos.
 const path = require('path');
 const fs = require('fs');
+const { createClient } = require('@libsql/client');
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+function localUrl() {
+  const dir = path.join(__dirname, '..', 'data');
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return 'file:' + path.join(dir, 'painel.db');
+}
 
-const db = new DatabaseSync(path.join(DATA_DIR, 'painel.db'));
-db.exec('PRAGMA journal_mode = WAL;');
-db.exec('PRAGMA foreign_keys = ON;');
+const client = createClient({
+  url: process.env.TURSO_DATABASE_URL || localUrl(),
+  authToken: process.env.TURSO_AUTH_TOKEN,
+});
 
-db.exec(`
+// libSQL rejeita undefined e devolve inteiros como BigInt.
+const toArgs = (args) => args.map(a => (a === undefined ? null : a));
+const fromCell = (v) => (typeof v === 'bigint' ? Number(v) : v);
+
+async function all(sql, ...args) {
+  const r = await client.execute({ sql, args: toArgs(args) });
+  return r.rows.map(row => {
+    const obj = {};
+    r.columns.forEach((col, i) => { obj[col] = fromCell(row[i]); });
+    return obj;
+  });
+}
+
+async function get(sql, ...args) {
+  return (await all(sql, ...args))[0];
+}
+
+async function run(sql, ...args) {
+  const r = await client.execute({ sql, args: toArgs(args) });
+  return {
+    lastInsertRowid: r.lastInsertRowid == null ? null : Number(r.lastInsertRowid),
+    rowsAffected: Number(r.rowsAffected || 0),
+  };
+}
+
+// Executa várias escritas numa única viagem à rede — essencial para a importação,
+// que sem isso faria milhares de idas e voltas até o Turso.
+async function batch(statements) {
+  if (!statements.length) return [];
+  const prepared = statements.map(s => (Array.isArray(s) ? { sql: s[0], args: toArgs(s.slice(1)) } : s));
+  return client.batch(prepared, 'write');
+}
+
+const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
@@ -23,12 +63,15 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS companies (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
+  short_name TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 100,
   active INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS cargos (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   company_id INTEGER NOT NULL REFERENCES companies(id),
+  trail_source_id INTEGER REFERENCES cargos(id),
   UNIQUE(name, company_id)
 );
 CREATE TABLE IF NOT EXISTS trainings (
@@ -69,8 +112,6 @@ CREATE TABLE IF NOT EXISTS records (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_records_emp ON records(employee_id, training_id);
--- Exigência individual: treinamento cobrado de um colaborador específico,
--- independentemente da trilha do cargo (vem das linhas da Base de Dados).
 CREATE TABLE IF NOT EXISTS requirements (
   employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
   training_id INTEGER NOT NULL REFERENCES trainings(id) ON DELETE CASCADE,
@@ -81,19 +122,24 @@ CREATE TABLE IF NOT EXISTS team_members (
   employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
   PRIMARY KEY (user_id, employee_id)
 );
-`);
+`;
 
-// Migrações incrementais (idempotentes)
-const cargoCols = db.prepare('PRAGMA table_info(cargos)').all().map(c => c.name);
-if (!cargoCols.includes('trail_source_id')) {
-  db.exec('ALTER TABLE cargos ADD COLUMN trail_source_id INTEGER REFERENCES cargos(id)');
-}
-const companyCols = db.prepare('PRAGMA table_info(companies)').all().map(c => c.name);
-if (!companyCols.includes('short_name')) {
-  db.exec('ALTER TABLE companies ADD COLUMN short_name TEXT');
-}
-if (!companyCols.includes('sort_order')) {
-  db.exec('ALTER TABLE companies ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 100');
+let ready = null;
+// Cria o schema uma única vez por processo. Em ambiente serverless cada instância
+// nova roda isso no primeiro acesso; as instruções são todas IF NOT EXISTS.
+function init() {
+  if (!ready) {
+    ready = (async () => {
+      await client.executeMultiple(SCHEMA);
+      // Migração de bancos criados antes destas colunas existirem.
+      const cols = (await all('PRAGMA table_info(companies)')).map(c => c.name);
+      if (!cols.includes('short_name')) await run('ALTER TABLE companies ADD COLUMN short_name TEXT');
+      if (!cols.includes('sort_order')) await run('ALTER TABLE companies ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 100');
+      const cargoCols = (await all('PRAGMA table_info(cargos)')).map(c => c.name);
+      if (!cargoCols.includes('trail_source_id')) await run('ALTER TABLE cargos ADD COLUMN trail_source_id INTEGER REFERENCES cargos(id)');
+    })();
+  }
+  return ready;
 }
 
-module.exports = db;
+module.exports = { client, all, get, run, batch, init };

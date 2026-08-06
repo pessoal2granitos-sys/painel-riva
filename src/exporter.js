@@ -7,8 +7,8 @@ const { brDate } = require('./normalize');
 // Gera um xlsx no mesmo formato da planilha original.
 // scopeEmployeeIds restringe a exportação aos colaboradores visíveis ao usuário
 // (um líder exporta apenas a própria equipe).
-function exportWorkbook(scopeEmployeeIds = null) {
-  const ds = buildDataset(scopeEmployeeIds);
+async function exportWorkbook(scopeEmployeeIds = null) {
+  const ds = await buildDataset(scopeEmployeeIds);
   const emap = new Map(ds.employees.map(e => [e.id, e]));
   const tmap = new Map(ds.trainings.map(t => [t.id, t]));
 

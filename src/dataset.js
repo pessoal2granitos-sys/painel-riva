@@ -13,18 +13,24 @@ function daysBetween(fromISO, toISO) {
 
 // Monta o conjunto completo de dados para o painel.
 // scopeEmployeeIds: se informado (líder), restringe aos colaboradores da equipe.
-function buildDataset(scopeEmployeeIds = null) {
+async function buildDataset(scopeEmployeeIds = null) {
   const today = todayISO();
-  const companies = db.prepare('SELECT * FROM companies WHERE active = 1 ORDER BY sort_order, name').all();
-  const cargos = db.prepare('SELECT * FROM cargos ORDER BY name').all();
-  const trainings = db.prepare('SELECT * FROM trainings WHERE active = 1 ORDER BY name').all();
-  let employees = db.prepare(`SELECT e.*, c.name AS company_name,
-      COALESCE(c.short_name, c.name) AS company_short, g.name AS cargo_name
-    FROM employees e JOIN companies c ON c.id = e.company_id
-    LEFT JOIN cargos g ON g.id = e.cargo_id
-    WHERE e.active = 1 ORDER BY e.name`).all();
-  const cargoBaseById = new Map();
 
+  const [companies, cargos, trainings, allEmployees, trails, reqRows, allRecords] = await Promise.all([
+    db.all('SELECT * FROM companies WHERE active = 1 ORDER BY sort_order, name'),
+    db.all('SELECT * FROM cargos ORDER BY name'),
+    db.all('SELECT * FROM trainings WHERE active = 1 ORDER BY name'),
+    db.all(`SELECT e.*, c.name AS company_name,
+        COALESCE(c.short_name, c.name) AS company_short, g.name AS cargo_name
+      FROM employees e JOIN companies c ON c.id = e.company_id
+      LEFT JOIN cargos g ON g.id = e.cargo_id
+      WHERE e.active = 1 ORDER BY e.name`),
+    db.all('SELECT cargo_id, training_id FROM trails'),
+    db.all('SELECT employee_id, training_id FROM requirements'),
+    db.all('SELECT * FROM records ORDER BY realizacao'),
+  ]);
+
+  let employees = allEmployees;
   if (scopeEmployeeIds) {
     const set = new Set(scopeEmployeeIds);
     employees = employees.filter(e => set.has(e.id));
@@ -32,13 +38,14 @@ function buildDataset(scopeEmployeeIds = null) {
 
   // Agrupa cargos que são o mesmo papel em níveis diferentes ("FIOLISTA I/III" -> "FIOLISTA").
   // O nome do grupo é o do cargo que tem trilha própria; na falta dele, o nome mais curto.
-  const ownTrail = new Set(db.prepare('SELECT DISTINCT cargo_id FROM trails').all().map(r => r.cargo_id));
+  const ownTrail = new Set(trails.map(t => t.cargo_id));
   const byBase = new Map();
   for (const c of cargos) {
     const k = cargoKey(c.name);
     if (!byBase.has(k)) byBase.set(k, []);
     byBase.get(k).push(c);
   }
+  const cargoBaseById = new Map();
   for (const [, group] of byBase) {
     const canonical = group.find(c => ownTrail.has(c.id))
       || group.slice().sort((a, b) => a.name.length - b.name.length)[0];
@@ -46,7 +53,6 @@ function buildDataset(scopeEmployeeIds = null) {
   }
   for (const e of employees) e.cargo_base = e.cargo_id ? (cargoBaseById.get(e.cargo_id) || e.cargo_name) : null;
 
-  const trails = db.prepare('SELECT cargo_id, training_id FROM trails').all();
   const trailMap = new Map(); // cargo_id -> Set(training_id)
   for (const t of trails) {
     if (!trailMap.has(t.cargo_id)) trailMap.set(t.cargo_id, new Set());
@@ -59,14 +65,12 @@ function buildDataset(scopeEmployeeIds = null) {
     }
   }
 
-  const reqRows = db.prepare('SELECT employee_id, training_id FROM requirements').all();
   const reqMap = new Map(); // employee_id -> Set(training_id)
   for (const r of reqRows) {
     if (!reqMap.has(r.employee_id)) reqMap.set(r.employee_id, new Set());
     reqMap.get(r.employee_id).add(r.training_id);
   }
 
-  const allRecords = db.prepare('SELECT * FROM records ORDER BY realizacao').all();
   const latest = new Map(); // "emp|tid" -> record (maior realizacao)
   const recCount = new Map();
   for (const r of allRecords) {

@@ -1,20 +1,42 @@
-# Publicar o painel na internet
+# Publicar o painel na internet — sem custo
 
-Objetivo: os gestores acessam de qualquer lugar, por um endereço próprio com HTTPS,
-cada um com seu login.
+Os gestores acessam de qualquer lugar, por um endereço com HTTPS, cada um com seu
+login. Tudo em planos gratuitos permanentes, sem cartão de crédito.
 
-O código já está pronto e commitado neste repositório Git. Faltam **três etapas que
-só você pode fazer**, porque envolvem criar contas e informar meio de pagamento.
+| Serviço | Papel | Plano |
+|---|---|---|
+| **Turso** | Banco de dados (SQLite gerenciado) | Gratuito — 9 GB, não expira |
+| **Vercel** | Hospeda o site | Gratuito (Hobby) |
+| **GitHub** | Guarda o código | Gratuito |
+
+> **Por que o banco mudou de lugar:** nenhuma hospedagem gratuita mantém arquivos
+> gravados em disco — tudo que o site escreve é apagado quando ele reinicia. Por isso
+> o banco saiu do arquivo local e foi para o Turso, que continua sendo SQLite, só que
+> hospedado. A aplicação foi adaptada e **revalidada contra a sua planilha**: mesmos
+> 151 colaboradores, 1.017 registros e, em Mineração Vista Linda, os mesmos 261
+> válidos, 100 pendentes e 42 vencidos.
 
 ---
 
-## Etapa 1 — Subir o código para o GitHub (repositório privado)
+## Etapa 1 — Criar o banco no Turso
 
-1. Crie a conta em <https://github.com> (gratuita), se ainda não tiver.
-2. Clique em **New repository**. Nome: `painel-riva`.
-   **Marque `Private`.** Não marque nenhuma opção de "Add README" ou ".gitignore".
-3. O GitHub mostra o endereço do repositório. Copie-o.
-4. Abra o PowerShell nesta pasta e rode, trocando `SEU-USUARIO`:
+1. Acesse <https://turso.tech> e crie a conta (dá para entrar com o GitHub).
+2. Crie um banco (**Create Database**), nome `painel-riva`, região mais próxima
+   do Brasil (`São Paulo` ou `Virginia`).
+3. Na página do banco, copie os dois valores:
+   - **Database URL** — começa com `libsql://`
+   - **Token** — em *Generate Token*, copie o texto longo
+
+Guarde os dois: são o `TURSO_DATABASE_URL` e o `TURSO_AUTH_TOKEN` da Etapa 3.
+
+---
+
+## Etapa 2 — Subir o código para o GitHub
+
+1. Crie a conta em <https://github.com> se não tiver.
+2. **New repository** → nome `painel-riva` → marque **Private** →
+   não marque nenhuma opção extra.
+3. Copie o endereço que aparece e rode no PowerShell, trocando `SEU-USUARIO`:
 
 ```
 cd "D:\Users\ana.claudia\Desktop\Arquitetura - Painel de treinamentos\painel-riva"
@@ -22,105 +44,99 @@ git remote add origin https://github.com/SEU-USUARIO/painel-riva.git
 git push -u origin main
 ```
 
-O Git vai pedir seu login do GitHub na primeira vez.
-
-> **O que vai para o GitHub:** apenas o código do sistema. A pasta `data/` (o banco
-> com os dados dos 151 colaboradores) e os arquivos `.xlsx` estão bloqueados pelo
-> `.gitignore` e **não sobem**. Já verifiquei: nenhum nome de funcionário nem senha
-> está nos arquivos versionados.
+> **O que sobe:** só o código. A pasta `data/` e os arquivos `.xlsx` estão bloqueados
+> pelo `.gitignore`. Verifiquei: nenhum nome de colaborador e nenhuma senha estão nos
+> arquivos versionados.
 
 ---
 
-## Etapa 2 — Criar o serviço na Render
+## Etapa 3 — Publicar na Vercel
 
-1. Crie a conta em <https://render.com> e conecte-a ao seu GitHub.
-2. **New → Web Service** → escolha o repositório `painel-riva`.
-3. A Render lê o arquivo `render.yaml` e preenche quase tudo sozinha. Confira:
-   - **Runtime:** Docker
-   - **Plan:** Starter
-   - **Disk:** montado em `/app/data`, 1 GB
-4. Em **Environment**, preencha as duas variáveis que ficaram em branco:
+1. Acesse <https://vercel.com>, entre com o GitHub.
+2. **Add New → Project** → escolha `painel-riva` → **Import**.
+3. Antes de clicar em Deploy, abra **Environment Variables** e cadastre:
 
-| Variável | O que colocar |
+| Nome | Valor |
 |---|---|
+| `TURSO_DATABASE_URL` | o endereço `libsql://...` da Etapa 1 |
+| `TURSO_AUTH_TOKEN` | o token da Etapa 1 |
+| `SESSION_SECRET` | uma frase longa e aleatória, inventada por você |
 | `ADMIN_EMAIL` | `departamentopessoalriva@gmail.com` |
-| `ADMIN_PASSWORD` | **uma senha nova**, que você ainda não usou em lugar nenhum |
+| `ADMIN_PASSWORD` | **uma senha nova**, que você ainda não usou |
 
-5. Clique em **Create Web Service** e aguarde alguns minutos.
+4. **Deploy.** Em um ou dois minutos sai o endereço, algo como
+   `https://painel-riva.vercel.app`.
 
-Ao final a Render mostra o endereço, algo como
-`https://painel-treinamentos-riva.onrender.com`.
-
-### ⚠️ O ponto que mais causa perda de dados
-
-O **disco persistente em `/app/data` é obrigatório**. Sem ele, o banco é apagado toda
-vez que o serviço reinicia — e a Render reinicia sozinha em atualizações e manutenções.
-O plano gratuito **não oferece disco persistente**; por isso o `render.yaml` já vem com
-o plano Starter (a partir de US$ 7/mês, cerca de R$ 40).
+> Se esquecer alguma variável, o site sobe mas não conecta no banco. Basta cadastrar
+> em *Settings → Environment Variables* e usar *Redeploy*.
 
 ---
 
-## Etapa 3 — Carregar os dados e liberar os acessos
+## Etapa 4 — Carregar os dados e liberar os acessos
 
-1. Acesse o endereço e entre com `ADMIN_EMAIL` e a senha nova.
-   O banco começa vazio — isso é esperado.
-2. Vá em **Importar / Exportar → Importar planilha** e envie o
-   `Balanço Normativos Att 05_08_26.xlsx`. Em segundos os 151 colaboradores,
-   as trilhas e a matriz de carga horária estarão lá.
-3. Vá em **Usuários e Acessos** e crie um login para cada gestor:
-   - **Gestor** — vê todos os painéis, não altera nada.
-   - **Líder** — vê apenas a equipe que você marcar para ele.
-   - **Supervisor** — configura o sistema junto com você.
+1. Acesse o endereço e entre com o `ADMIN_EMAIL` e a senha nova.
+   O banco começa vazio — é o esperado.
+2. **Importar / Exportar → Importar planilha** → envie o
+   `Balanço Normativos Att 05_08_26.xlsx`. Leva menos de um segundo.
+3. **Usuários e Acessos** → crie um login por gestor:
+   - **Gestor** — vê todos os painéis, não altera nada
+   - **Líder** — vê apenas a equipe que você marcar
+   - **Supervisor** — configura o sistema junto com você
 4. Envie a cada um o endereço e a senha, pedindo que troquem no botão **Senha**.
 
 ---
 
-## Cuidados depois de publicado
+## Depois de publicado
 
-**Uma senha por pessoa.** Nunca um login compartilhado — sem isso não dá para tirar o
-acesso de alguém que sai da empresa sem trocar a senha de todo mundo.
-
-**Troque a senha do administrador.** A senha que você usa hoje já circulou fora do
-sistema, então não deve ser a mesma do ambiente publicado.
+**Uma senha por pessoa.** Nunca um login compartilhado — sem isso não dá para tirar
+o acesso de quem sai da empresa sem trocar a senha de todo mundo.
 
 **Backup.** Uma vez por semana, entre em *Importar / Exportar* e baixe o `.xlsx`.
-É seu backup completo e abre no Excel normalmente.
+É o backup completo e abre no Excel normalmente.
 
-**LGPD.** O painel contém nome, cargo, empresa e admissão de 151 pessoas. Publicado,
-ele fica atrás de uma tela de login acessível pela internet. Vale registrar
-internamente quem tem acesso e revisar essa lista periodicamente.
+**Limites do plano gratuito.** O Turso gratuito oferece 9 GB e 1 bilhão de leituras
+por mês; este painel usa uma fração mínima disso. A Vercel Hobby é gratuita para uso
+interno como este. Nenhum dos dois expira nem pede cartão.
+
+**LGPD.** O painel tem nome, cargo, empresa e admissão de 151 pessoas, e passa a
+ficar atrás de uma tela de login acessível pela internet. Vale registrar internamente
+quem tem acesso e revisar essa lista de tempos em tempos.
 
 ---
 
-## Proteções já implementadas
+## Proteções implementadas
 
 | Proteção | O que faz |
 |---|---|
 | HTTPS obrigatório | Cookie de sessão só trafega cifrado (`Secure` + HSTS) |
 | Bloqueio de força bruta | 8 senhas erradas travam aquele login por 15 minutos |
-| Renovação de sessão | Novo identificador a cada login, contra fixação de sessão |
+| Sessão assinada | Guardada em cookie assinado; não dá para forjar sem o `SESSION_SECRET` |
 | Isolamento do líder | Líder só lê e exporta a própria equipe, inclusive pela API |
 | Cabeçalhos de segurança | `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy` |
 | Senhas | Guardadas com bcrypt, nunca em texto puro |
+| Dependências | Zero vulnerabilidades conhecidas (`npm audit`) |
 
-Testado em modo de produção simulando o proxy da hospedagem: login íntegro, cookie
-com `Secure` e `HttpOnly`, acesso sem sessão bloqueado com 401.
+---
+
+## Rodar na sua máquina
+
+Continua funcionando com o `Iniciar Painel.bat`. Sem as variáveis do Turso, o sistema
+usa o arquivo local `data/painel.db` — útil para testar sem mexer no ambiente publicado.
 
 ## Variáveis de ambiente
 
 | Variável | Para que serve |
 |---|---|
-| `PORT` | Porta do servidor — a hospedagem define sozinha |
-| `HOST` | Interface de escuta (padrão `0.0.0.0`) |
-| `BEHIND_PROXY` | `1` quando há proxy HTTPS na frente; ativa cookie seguro e HSTS |
-| `SESSION_SECRET` | Segredo dos cookies; a Render gera automaticamente |
+| `TURSO_DATABASE_URL` | Banco hospedado. Sem ela, usa o arquivo local |
+| `TURSO_AUTH_TOKEN` | Token de acesso ao Turso |
+| `SESSION_SECRET` | Assina o cookie de sessão |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | Usados só na primeira execução, para criar a administradora |
+| `BEHIND_PROXY` | `1` quando há proxy HTTPS; a Vercel ativa isso sozinha |
+| `PORT` / `HOST` | Só para execução local |
 
----
+## Também roda em
 
-## Alternativa mais barata
-
-Se os R$ 40/mês pesarem, existe caminho gratuito, mas exige trocar o banco SQLite por
-um PostgreSQL hospedado de graça (Neon ou Supabase). É uma alteração no código que
-mexe em toda a camada de dados — dá para fazer, só precisa ser revalidada contra a
-planilha depois. Peça se quiser seguir por aí.
+O `Dockerfile` e o `render.yaml` continuam na pasta. Com o Turso configurado, o mesmo
+código roda no plano gratuito da Render, Koyeb ou Fly.io sem alteração — a diferença é
+que a Vercel não hiberna, enquanto o plano gratuito da Render demora a acordar depois
+de um tempo parado.

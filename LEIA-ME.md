@@ -75,22 +75,34 @@ O colaborador sai dos indicadores mas o histórico é preservado. Evite excluir.
   os existentes atualizados. A opção *Substituir todos os lançamentos* apaga os
   lançamentos atuais antes de importar — use com cuidado.
 
+## Publicar na internet
+
+Para os gestores acessarem de qualquer lugar, veja **[DEPLOY.md](DEPLOY.md)** —
+o passo a passo usa Turso, Vercel e GitHub, todos em plano gratuito permanente.
+
 ## Backup
 
-Todos os dados ficam em **`data/painel.db`**. Copie esse arquivo periodicamente
-(com o servidor fechado) para ter um backup completo.
+Rodando na sua máquina, os dados ficam em **`data/painel.db`** — copie o arquivo com
+o servidor fechado. Publicado, os dados ficam no Turso; o backup é baixar o `.xlsx`
+pela aba *Importar / Exportar*, que abre no Excel normalmente.
 
 ## Estrutura técnica
 
 ```
 painel-riva/
-├── server.js            API e autenticação (Express + sessão)
+├── server.js            API e autenticação (Express + cookie de sessão assinado)
 ├── src/
-│   ├── db.js            banco SQLite e migrações
+│   ├── db.js            acesso ao banco: arquivo local ou Turso
 │   ├── normalize.js     normalização de nomes, datas e cargos
 │   ├── importer.js      leitura da planilha e vínculo de trilhas
 │   ├── dataset.js       cálculo de situação, dias e horas
 │   └── exporter.js      geração da planilha
 ├── public/              interface (HTML, CSS, JS, Chart.js)
-└── data/painel.db       banco de dados
+├── api/index.js         ponto de entrada na Vercel
+├── vercel.json          configuração da Vercel
+├── Dockerfile           para hospedagens que usam contêiner
+└── data/painel.db       banco local (não usado quando há Turso)
 ```
+
+O banco é SQLite nos dois cenários — local em arquivo, publicado no Turso — então o
+comportamento é idêntico.
