@@ -6,16 +6,32 @@ const path = require('path');
 const fs = require('fs');
 const { createClient } = require('@libsql/client');
 
+// Em hospedagem serverless o disco é somente leitura: sem o Turso configurado
+// não há onde guardar dados. A criação do cliente é adiada para o primeiro uso,
+// para o erro aparecer como mensagem clara e não como falha misteriosa no boot.
+const NA_NUVEM = process.env.VERCEL === '1' || process.env.AWS_LAMBDA_FUNCTION_NAME;
+
 function localUrl() {
   const dir = path.join(__dirname, '..', 'data');
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return 'file:' + path.join(dir, 'painel.db');
 }
 
-const client = createClient({
-  url: process.env.TURSO_DATABASE_URL || localUrl(),
-  authToken: process.env.TURSO_AUTH_TOKEN,
-});
+let _client = null;
+function getClient() {
+  if (_client) return _client;
+  if (!process.env.TURSO_DATABASE_URL && NA_NUVEM) {
+    throw new Error('Banco de dados não configurado: defina TURSO_DATABASE_URL e TURSO_AUTH_TOKEN nas variáveis de ambiente do projeto.');
+  }
+  _client = createClient({
+    url: process.env.TURSO_DATABASE_URL || localUrl(),
+    authToken: process.env.TURSO_AUTH_TOKEN,
+  });
+  return _client;
+}
+const client = { execute: (...a) => getClient().execute(...a),
+                 executeMultiple: (...a) => getClient().executeMultiple(...a),
+                 batch: (...a) => getClient().batch(...a) };
 
 // libSQL rejeita undefined e devolve inteiros como BigInt.
 const toArgs = (args) => args.map(a => (a === undefined ? null : a));

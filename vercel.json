@@ -1,12 +1,15 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "functions": {
-    "api/index.js": {
-      "includeFiles": "public/**",
-      "maxDuration": 60
+  "services": {
+    "painel-treinamentos-riva": {
+      "root": ".",
+      "entrypoint": "server.js"
     }
   },
   "rewrites": [
-    { "source": "/(.*)", "destination": "/api/index.js" }
+    {
+      "source": "/(.*)",
+      "destination": { "type": "service", "service": "painel-treinamentos-riva" }
+    }
   ]
 }

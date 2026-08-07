@@ -74,10 +74,13 @@ function ensureReady() {
       await db.init();
       const { c } = await db.get('SELECT COUNT(*) c FROM users');
       if (c === 0) {
-        const hash = bcrypt.hashSync(process.env.ADMIN_PASSWORD || 'trocar123', 10);
+        // trim() também remove o BOM (U+FEFF) que ferramentas de linha de comando
+        // no Windows costumam anexar ao gravar variáveis de ambiente.
+        const limpo = (v, padrao) => (v || padrao).trim();
+        const hash = bcrypt.hashSync(limpo(process.env.ADMIN_PASSWORD, 'trocar123'), 10);
         await db.run("INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, 'admin')",
-          process.env.ADMIN_NAME || 'Administradora',
-          process.env.ADMIN_EMAIL || 'departamentopessoalriva@gmail.com', hash);
+          limpo(process.env.ADMIN_NAME, 'Administradora'),
+          limpo(process.env.ADMIN_EMAIL, 'departamentopessoalriva@gmail.com'), hash);
         console.log('Usuário administrador criado.');
       }
     })().catch(err => { readyPromise = null; throw err; });
@@ -563,6 +566,9 @@ app.get('/', (req, res) => {
 app.use((err, req, res, _next) => {
   console.error('Erro não tratado:', err);
   if (res.headersSent) return;
+  if (err && /Banco de dados não configurado/.test(err.message || '')) {
+    return res.status(503).json({ error: err.message });
+  }
   res.status(500).json({ error: 'Erro interno no servidor' });
 });
 
