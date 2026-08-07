@@ -25,17 +25,45 @@ A senha é a que foi definida na primeira execução. Troque quando quiser pelo 
 > Para definir outra senha inicial, inicie com as variáveis `ADMIN_EMAIL` e
 > `ADMIN_PASSWORD`.
 
+## Painel de Administração
+
+A aba **⚙ Administração** reúne tudo que configura o sistema, em nove seções:
+
+| Seção | Para quê |
+|---|---|
+| **Resumo** | Números do cadastro e atalhos para as tarefas do dia a dia |
+| **Colaboradores** | Incluir, editar, registrar demissão |
+| **Lançamentos** | Registrar treinamentos realizados |
+| **Empresas** | Razão social, nome curto e ordem de exibição |
+| **Cargos e Trilhas** | Quais NRs são obrigatórias em cada cargo |
+| **Treinamentos** | Matriz de carga horária, validade e custo |
+| **Perfis de Acesso** | Criar perfis e definir o que cada um enxerga |
+| **Usuários** | Criar logins e vincular ao perfil |
+| **Importar / Exportar** | Carregar e baixar a planilha |
+
 ## Perfis de acesso
 
-| Perfil | O que pode fazer |
-|---|---|
-| **Administradora** | Tudo: cadastros, exclusões, usuários, licenças, importar/exportar |
-| **Supervisor** | Cadastros, lançamentos e gestão de usuários (não mexe em administradores nem exclui registros) |
-| **Gestor** | Somente visualiza os painéis, com todos os filtros |
-| **Líder** | Visualiza apenas os indicadores da equipe que a administradora atribuir a ele |
+O perfil define **quais painéis de indicadores** o usuário vê e **quais ações** pode
+executar. Quatro perfis vêm prontos e podem ser ajustados; você cria quantos quiser.
 
-Usuários são criados em **Usuários e Acessos**. Para um líder, marque na lista quais
-colaboradores compõem a equipe dele.
+| Perfil | Alcance | O que faz |
+|---|---|---|
+| **Administradora** | Todos | Controle total, incluindo perfis e exclusões |
+| **Supervisor** | Todos | Configura o sistema e gerencia usuários; não exclui nem cria perfis |
+| **Gestor** | Todos | Visualiza os painéis e exporta relatórios |
+| **Líder** | Só a equipe | Vê apenas os indicadores da equipe atribuída a ele |
+
+Ao criar um perfil você marca, item a item, os cinco painéis e as oito ações
+(lançar, cadastrar, configurar, gerenciar usuários, gerenciar perfis, importar,
+exportar, excluir). O **alcance** decide se a pessoa vê todos os colaboradores ou
+somente a equipe que você marcar para ela na tela de Usuários.
+
+Duas travas protegem o sistema:
+
+- Ninguém concede um perfil com mais permissões do que ele próprio tem — um
+  supervisor não consegue criar um usuário com perfil de administradora.
+- O perfil da administradora sempre mantém acesso total, para o sistema nunca
+  ficar sem quem o administre.
 
 ## As abas do painel
 

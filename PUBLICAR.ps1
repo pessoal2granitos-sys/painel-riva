@@ -6,9 +6,41 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 Set-Location $PSScriptRoot
 
-$NODE = "$env:LOCALAPPDATA\node-portable\node-v24.19.0-win-x64\node.exe"
 $VERCEL = Join-Path $PSScriptRoot 'node_modules\vercel\dist\index.js'
 $env:VERCEL_TELEMETRY_DISABLED = '1'
+$NODE_VER = 'v24.19.0'
+
+# Procura o Node em todos os lugares plausíveis. Se não achar, baixa a versão
+# portátil (não precisa de permissão de administrador).
+function Achar-Node {
+  $candidatos = @()
+  $cmd = Get-Command node.exe -ErrorAction SilentlyContinue
+  if ($cmd) { $candidatos += $cmd.Source }
+  $candidatos += "$env:ProgramFiles\nodejs\node.exe"
+  $candidatos += "${env:ProgramFiles(x86)}\nodejs\node.exe"
+  $candidatos += "$env:LOCALAPPDATA\Programs\nodejs\node.exe"
+  $raiz = "$env:LOCALAPPDATA\node-portable"
+  if (Test-Path $raiz) {
+    $candidatos += (Get-ChildItem $raiz -Directory -ErrorAction SilentlyContinue |
+                    Sort-Object Name -Descending | ForEach-Object { Join-Path $_.FullName 'node.exe' })
+  }
+  foreach ($c in $candidatos) {
+    if ($c -and (Test-Path $c -PathType Leaf)) { return $c }
+  }
+  return $null
+}
+
+function Instalar-Node {
+  $dest = "$env:LOCALAPPDATA\node-portable"
+  $zip = Join-Path $env:TEMP "node-$NODE_VER-win-x64.zip"
+  Write-Host "  Baixando o Node $NODE_VER (uma vez so, ~30 MB)..."
+  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+  New-Item -ItemType Directory -Force $dest | Out-Null
+  Invoke-WebRequest -Uri "https://nodejs.org/dist/$NODE_VER/node-$NODE_VER-win-x64.zip" -OutFile $zip -UseBasicParsing
+  Expand-Archive -Path $zip -DestinationPath $dest -Force
+  Remove-Item $zip -Force -ErrorAction SilentlyContinue
+  return Achar-Node
+}
 
 function Titulo($t) {
   Write-Host ''
@@ -25,11 +57,17 @@ Write-Host '  ===========================================================' -Fore
 Write-Host '   PUBLICAR PAINEL DE TREINAMENTOS - RIVA STONES' -ForegroundColor White
 Write-Host '  ===========================================================' -ForegroundColor Blue
 
-if (-not (Test-Path $NODE)) { Erro "Node nao encontrado em $NODE"; Read-Host 'Enter para sair'; exit 1 }
+$NODE = Achar-Node
+if (-not $NODE) {
+  try { $NODE = Instalar-Node } catch { Erro "Falha ao baixar o Node: $($_.Exception.Message)" }
+}
+if (-not $NODE) { Erro 'Nao foi possivel obter o Node.js. Verifique a conexao com a internet.'; Read-Host 'Enter para sair'; exit 1 }
+Ok "Node encontrado: $NODE"
 
 if (-not (Test-Path $VERCEL)) {
   Write-Host '  Instalando a ferramenta de publicacao (so na primeira vez)...'
-  $npm = "$env:LOCALAPPDATA\node-portable\node-v24.19.0-win-x64\npm.cmd"
+  $npm = Join-Path (Split-Path $NODE) 'npm.cmd'
+  if (-not (Test-Path $npm)) { $npm = 'npm.cmd' }
   & $npm install --no-save vercel 2>&1 | Out-Null
   if (-not (Test-Path $VERCEL)) { Erro 'Falha ao instalar o Vercel CLI. Verifique a internet.'; Read-Host 'Enter para sair'; exit 1 }
   Ok 'Ferramenta instalada.'

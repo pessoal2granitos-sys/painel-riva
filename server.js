@@ -12,6 +12,7 @@ const { importWorkbook, linkCargoTrails } = require('./src/importer');
 const { exportWorkbook } = require('./src/exporter');
 const { buildDataset, todayISO } = require('./src/dataset');
 const { cleanName, toISODate, shortCompanyName, trainingKey } = require('./src/normalize');
+const perms = require('./src/perms');
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -85,10 +86,22 @@ function ensureReady() {
 }
 app.use(h(async (req, res, next) => { await ensureReady(); next(); }));
 
-// ---- Autenticação ----
+// ---- Autenticação e permissões ----
+// O usuário carrega o perfil junto. As permissões vêm do perfil, exceto para a
+// administradora original, que mantém acesso total mesmo que o perfil seja alterado
+// — assim não há como o sistema ficar sem ninguém capaz de administrá-lo.
 async function currentUser(req) {
   if (!req.session || !req.session.userId) return null;
-  return db.get('SELECT * FROM users WHERE id = ? AND active = 1', req.session.userId);
+  const user = await db.get(`SELECT u.*, p.name AS profile_name, p.scope AS profile_scope,
+      p.permissions AS profile_permissions
+    FROM users u LEFT JOIN profiles p ON p.id = u.profile_id
+    WHERE u.id = ? AND u.active = 1`, req.session.userId);
+  if (!user) return null;
+  user.perms = user.role === 'admin'
+    ? Object.fromEntries(perms.TODAS.map(k => [k, true]))
+    : perms.normalizar(user.profile_permissions);
+  user.scope = user.role === 'admin' ? 'all' : (user.profile_scope || 'all');
+  return user;
 }
 const requireAuth = h(async (req, res, next) => {
   const user = await currentUser(req);
@@ -96,11 +109,14 @@ const requireAuth = h(async (req, res, next) => {
   req.user = user;
   next();
 });
-function requireRole(...roles) {
+// Exige uma permissão. Aceita várias chaves: basta ter uma delas.
+function requirePerm(...chaves) {
   return h(async (req, res, next) => {
     const user = await currentUser(req);
     if (!user) return res.status(401).json({ error: 'Não autenticado' });
-    if (!roles.includes(user.role)) return res.status(403).json({ error: 'Sem permissão' });
+    if (!chaves.some(k => user.perms[k])) {
+      return res.status(403).json({ error: 'Seu perfil de acesso não permite esta ação' });
+    }
     req.user = user;
     next();
   });
@@ -165,7 +181,7 @@ app.post('/api/me/password', requireAuth, h(async (req, res) => {
 // ---- Alcance de visibilidade ----
 // Líder enxerga apenas a equipe atribuída a ele; os demais perfis veem tudo.
 async function scopeFor(user) {
-  if (!user || user.role !== 'lider') return null;
+  if (!user || user.scope !== 'team') return null;
   const rows = await db.all('SELECT employee_id FROM team_members WHERE user_id = ?', user.id);
   return rows.map(r => r.employee_id);
 }
@@ -178,14 +194,75 @@ async function employeeInScope(user, employeeId) {
 // ---- Painel (dataset) ----
 app.get('/api/dataset', requireAuth, h(async (req, res) => {
   const ds = await buildDataset(await scopeFor(req.user));
-  ds.user = { id: req.user.id, name: req.user.name, role: req.user.role };
+  ds.user = {
+    id: req.user.id, name: req.user.name, role: req.user.role,
+    profile: req.user.profile_name || null,
+    perms: req.user.perms, scope: req.user.scope,
+  };
   res.json(ds);
 }));
 
-// ---- CRUD (admin e supervisor) ----
-const canEdit = requireRole('admin', 'supervisor');
+// ---- Perfis de acesso ----
+const podePerfis = requirePerm('perfis');
 
-app.post('/api/companies', canEdit, h(async (req, res) => {
+app.get('/api/profiles', requirePerm('perfis', 'usuarios'), h(async (req, res) => {
+  const rows = await db.all('SELECT * FROM profiles ORDER BY is_system DESC, name');
+  const usos = await db.all('SELECT profile_id, COUNT(*) c FROM users GROUP BY profile_id');
+  const porPerfil = new Map(usos.map(u => [u.profile_id, u.c]));
+  res.json({
+    profiles: rows.map(p => ({ ...p, permissions: perms.normalizar(p.permissions), usuarios: porPerfil.get(p.id) || 0 })),
+    catalogo: { paineis: perms.PAINEIS, acoes: perms.ACOES },
+  });
+}));
+
+app.post('/api/profiles', podePerfis, h(async (req, res) => {
+  const name = cleanName(req.body.name);
+  if (!name) return res.status(400).json({ error: 'Dê um nome ao perfil' });
+  const scope = req.body.scope === 'team' ? 'team' : 'all';
+  try {
+    const r = await db.run('INSERT INTO profiles (name, description, scope, permissions, is_system) VALUES (?, ?, ?, ?, 0)',
+      name, cleanName(req.body.description) || null, scope, JSON.stringify(perms.normalizar(req.body.permissions)));
+    res.json({ ok: true, id: r.lastInsertRowid });
+  } catch { res.status(400).json({ error: 'Já existe um perfil com este nome' }); }
+}));
+
+app.put('/api/profiles/:id', podePerfis, h(async (req, res) => {
+  const id = Number(req.params.id);
+  const alvo = await db.get('SELECT * FROM profiles WHERE id = ?', id);
+  if (!alvo) return res.status(404).json({ error: 'Perfil não encontrado' });
+
+  // O perfil da administradora não pode perder permissões, senão o sistema fica
+  // sem ninguém capaz de administrá-lo.
+  const permissoes = alvo.name === 'Administradora'
+    ? Object.fromEntries(perms.TODAS.map(k => [k, true]))
+    : perms.normalizar(req.body.permissions);
+  const scope = alvo.name === 'Administradora' ? 'all' : (req.body.scope === 'team' ? 'team' : 'all');
+  const nome = alvo.is_system ? alvo.name : (cleanName(req.body.name) || alvo.name);
+
+  await db.run('UPDATE profiles SET name = ?, description = ?, scope = ?, permissions = ? WHERE id = ?',
+    nome, req.body.description !== undefined ? cleanName(req.body.description) : alvo.description,
+    scope, JSON.stringify(permissoes), id);
+  res.json({ ok: true });
+}));
+
+app.delete('/api/profiles/:id', podePerfis, h(async (req, res) => {
+  const id = Number(req.params.id);
+  const alvo = await db.get('SELECT * FROM profiles WHERE id = ?', id);
+  if (!alvo) return res.status(404).json({ error: 'Perfil não encontrado' });
+  if (alvo.is_system) return res.status(400).json({ error: 'Os perfis padrão do sistema não podem ser excluídos' });
+  const { c } = await db.get('SELECT COUNT(*) c FROM users WHERE profile_id = ?', id);
+  if (c > 0) return res.status(400).json({ error: 'Há ' + c + ' usuário(s) com este perfil. Mude-os de perfil antes.' });
+  await db.run('DELETE FROM profiles WHERE id = ?', id);
+  res.json({ ok: true });
+}));
+
+// ---- CRUD, cada rota exigindo a permissão correspondente ----
+const podeConfig = requirePerm('config');
+const podeColaboradores = requirePerm('colaboradores');
+const podeLancar = requirePerm('lancamentos');
+const podeExcluir = requirePerm('excluir');
+
+app.post('/api/companies', podeConfig, h(async (req, res) => {
   const name = cleanName(req.body.name);
   if (!name) return res.status(400).json({ error: 'Nome obrigatório' });
   try {
@@ -194,7 +271,7 @@ app.post('/api/companies', canEdit, h(async (req, res) => {
     res.json({ ok: true, id: r.lastInsertRowid });
   } catch { res.status(400).json({ error: 'Empresa já existe' }); }
 }));
-app.put('/api/companies/:id', canEdit, h(async (req, res) => {
+app.put('/api/companies/:id', podeConfig, h(async (req, res) => {
   await db.run(`UPDATE companies SET name = COALESCE(?, name), short_name = COALESCE(?, short_name),
     sort_order = COALESCE(?, sort_order), active = COALESCE(?, active) WHERE id = ?`,
     req.body.name ? cleanName(req.body.name) : null,
@@ -202,7 +279,7 @@ app.put('/api/companies/:id', canEdit, h(async (req, res) => {
     req.body.sort_order ?? null, req.body.active ?? null, Number(req.params.id));
   res.json({ ok: true });
 }));
-app.delete('/api/companies/:id', requireRole('admin'), h(async (req, res) => {
+app.delete('/api/companies/:id', podeExcluir, h(async (req, res) => {
   const id = Number(req.params.id);
   const { c } = await db.get('SELECT COUNT(*) c FROM employees WHERE company_id = ?', id);
   if (c > 0) return res.status(400).json({ error: 'Há colaboradores vinculados a esta empresa. Exclua ou transfira antes.' });
@@ -210,7 +287,7 @@ app.delete('/api/companies/:id', requireRole('admin'), h(async (req, res) => {
   res.json({ ok: true });
 }));
 
-app.post('/api/cargos', canEdit, h(async (req, res) => {
+app.post('/api/cargos', podeConfig, h(async (req, res) => {
   const name = cleanName(req.body.name);
   const companyId = Number(req.body.company_id);
   if (!name || !companyId) return res.status(400).json({ error: 'Nome e empresa obrigatórios' });
@@ -219,7 +296,7 @@ app.post('/api/cargos', canEdit, h(async (req, res) => {
     res.json({ ok: true, id: r.lastInsertRowid });
   } catch { res.status(400).json({ error: 'Cargo já existe nesta empresa' }); }
 }));
-app.put('/api/cargos/:id', canEdit, h(async (req, res) => {
+app.put('/api/cargos/:id', podeConfig, h(async (req, res) => {
   const id = Number(req.params.id);
   await db.run('UPDATE cargos SET name = COALESCE(?, name) WHERE id = ?',
     req.body.name ? cleanName(req.body.name) : null, id);
@@ -237,7 +314,7 @@ app.put('/api/cargos/:id', canEdit, h(async (req, res) => {
   }
   res.json({ ok: true });
 }));
-app.delete('/api/cargos/:id', requireRole('admin'), h(async (req, res) => {
+app.delete('/api/cargos/:id', podeExcluir, h(async (req, res) => {
   const id = Number(req.params.id);
   const { c } = await db.get('SELECT COUNT(*) c FROM employees WHERE cargo_id = ?', id);
   if (c > 0) return res.status(400).json({ error: 'Há colaboradores com este cargo. Altere-os antes.' });
@@ -245,7 +322,7 @@ app.delete('/api/cargos/:id', requireRole('admin'), h(async (req, res) => {
   res.json({ ok: true });
 }));
 
-app.post('/api/trainings', canEdit, h(async (req, res) => {
+app.post('/api/trainings', podeConfig, h(async (req, res) => {
   const name = cleanName(req.body.name);
   if (!name) return res.status(400).json({ error: 'Nome obrigatório' });
   try {
@@ -258,7 +335,7 @@ app.post('/api/trainings', canEdit, h(async (req, res) => {
     res.json({ ok: true, id: r.lastInsertRowid });
   } catch { res.status(400).json({ error: 'Treinamento já existe' }); }
 }));
-app.put('/api/trainings/:id', canEdit, h(async (req, res) => {
+app.put('/api/trainings/:id', podeConfig, h(async (req, res) => {
   const b = req.body;
   await db.run(`UPDATE trainings SET name = COALESCE(?, name), ch_formacao = COALESCE(?, ch_formacao),
     ch_reciclagem = COALESCE(?, ch_reciclagem), validade_meses = COALESCE(?, validade_meses),
@@ -270,7 +347,7 @@ app.put('/api/trainings/:id', canEdit, h(async (req, res) => {
     b.custo_formacao ?? null, b.custo_reciclagem ?? null, b.active ?? null, Number(req.params.id));
   res.json({ ok: true });
 }));
-app.delete('/api/trainings/:id', requireRole('admin'), h(async (req, res) => {
+app.delete('/api/trainings/:id', podeExcluir, h(async (req, res) => {
   const id = Number(req.params.id);
   const { c } = await db.get('SELECT COUNT(*) c FROM records WHERE training_id = ?', id);
   if (c > 0) return res.status(400).json({ error: 'Há lançamentos para este treinamento. Exclua-os antes ou desative o treinamento.' });
@@ -278,7 +355,7 @@ app.delete('/api/trainings/:id', requireRole('admin'), h(async (req, res) => {
   res.json({ ok: true });
 }));
 
-app.post('/api/employees', canEdit, h(async (req, res) => {
+app.post('/api/employees', podeColaboradores, h(async (req, res) => {
   const name = cleanName(req.body.name);
   const companyId = Number(req.body.company_id);
   if (!name || !companyId) return res.status(400).json({ error: 'Nome e empresa obrigatórios' });
@@ -289,7 +366,7 @@ app.post('/api/employees', canEdit, h(async (req, res) => {
     res.json({ ok: true, id: r.lastInsertRowid });
   } catch { res.status(400).json({ error: 'Colaborador já existe nesta empresa' }); }
 }));
-app.put('/api/employees/:id', canEdit, h(async (req, res) => {
+app.put('/api/employees/:id', podeColaboradores, h(async (req, res) => {
   const b = req.body;
   await db.run(`UPDATE employees SET name = COALESCE(?, name), company_id = COALESCE(?, company_id),
     cargo_id = ?, admissao = ?, demissao = ?, active = COALESCE(?, active) WHERE id = ?`,
@@ -298,7 +375,7 @@ app.put('/api/employees/:id', canEdit, h(async (req, res) => {
     b.active ?? null, Number(req.params.id));
   res.json({ ok: true });
 }));
-app.delete('/api/employees/:id', requireRole('admin'), h(async (req, res) => {
+app.delete('/api/employees/:id', podeExcluir, h(async (req, res) => {
   await db.run('DELETE FROM employees WHERE id = ?', Number(req.params.id));
   res.json({ ok: true });
 }));
@@ -313,7 +390,7 @@ app.get('/api/records/:employeeId', requireAuth, h(async (req, res) => {
     Number(req.params.employeeId));
   res.json(rows);
 }));
-app.post('/api/records', canEdit, h(async (req, res) => {
+app.post('/api/records', podeLancar, h(async (req, res) => {
   const employeeId = Number(req.body.employee_id);
   const trainingId = Number(req.body.training_id);
   const realizacao = toISODate(req.body.realizacao);
@@ -333,12 +410,12 @@ app.post('/api/records', canEdit, h(async (req, res) => {
     employeeId, trainingId, realizacao, vencimento, req.body.obs || null);
   res.json({ ok: true, id: r.lastInsertRowid, vencimento });
 }));
-app.put('/api/records/:id', canEdit, h(async (req, res) => {
+app.put('/api/records/:id', podeLancar, h(async (req, res) => {
   await db.run('UPDATE records SET realizacao = COALESCE(?, realizacao), vencimento = COALESCE(?, vencimento), obs = COALESCE(?, obs) WHERE id = ?',
     toISODate(req.body.realizacao), toISODate(req.body.vencimento), req.body.obs ?? null, Number(req.params.id));
   res.json({ ok: true });
 }));
-app.delete('/api/records/:id', canEdit, h(async (req, res) => {
+app.delete('/api/records/:id', podeLancar, h(async (req, res) => {
   await db.run('DELETE FROM records WHERE id = ?', Number(req.params.id));
   res.json({ ok: true });
 }));
@@ -353,56 +430,90 @@ app.get('/api/requirements/:employeeId', requireAuth, h(async (req, res) => {
     Number(req.params.employeeId));
   res.json(rows);
 }));
-app.post('/api/requirements', canEdit, h(async (req, res) => {
+app.post('/api/requirements', podeLancar, h(async (req, res) => {
   const employeeId = Number(req.body.employee_id), trainingId = Number(req.body.training_id);
   if (!employeeId || !trainingId) return res.status(400).json({ error: 'Colaborador e treinamento obrigatórios' });
   await db.run('INSERT OR IGNORE INTO requirements (employee_id, training_id) VALUES (?, ?)', employeeId, trainingId);
   res.json({ ok: true });
 }));
-app.delete('/api/requirements/:employeeId/:trainingId', canEdit, h(async (req, res) => {
+app.delete('/api/requirements/:employeeId/:trainingId', podeLancar, h(async (req, res) => {
   await db.run('DELETE FROM requirements WHERE employee_id = ? AND training_id = ?',
     Number(req.params.employeeId), Number(req.params.trainingId));
   res.json({ ok: true });
 }));
 
 // ---- Usuários e acessos ----
-const canManageUsers = requireRole('admin', 'supervisor');
-app.get('/api/users', canManageUsers, h(async (req, res) => {
+const podeUsuarios = requirePerm('usuarios');
+app.get('/api/users', podeUsuarios, h(async (req, res) => {
   const [users, teams] = await Promise.all([
-    db.all('SELECT id, name, email, role, active, created_at FROM users ORDER BY name'),
+    db.all(`SELECT u.id, u.name, u.email, u.role, u.active, u.created_at, u.profile_id,
+        p.name AS profile_name, p.scope AS profile_scope
+      FROM users u LEFT JOIN profiles p ON p.id = u.profile_id ORDER BY u.name`),
     db.all('SELECT user_id, employee_id FROM team_members'),
   ]);
   res.json({ users, teams });
 }));
-app.post('/api/users', canManageUsers, h(async (req, res) => {
-  const { name, email, password, role } = req.body || {};
-  if (!name || !email || !password || !role) return res.status(400).json({ error: 'Preencha nome, e-mail, senha e perfil' });
-  if (!['admin', 'supervisor', 'gestor', 'lider'].includes(role)) return res.status(400).json({ error: 'Perfil inválido' });
-  if (role === 'admin' && req.user.role !== 'admin') return res.status(403).json({ error: 'Apenas a administradora pode criar outros administradores' });
+
+// Impede escalada de privilégio: ninguém pode conceder um perfil com permissões
+// que ele próprio não tem. Sem isso um supervisor criaria um usuário com o perfil
+// de administradora e ganharia acesso total por tabela.
+async function perfilAtribuivel(user, profileId) {
+  const perfil = await db.get('SELECT * FROM profiles WHERE id = ?', Number(profileId));
+  if (!perfil) return { ok: false, erro: 'Perfil não encontrado' };
+  const alvo = perms.normalizar(perfil.permissions);
+  const excedentes = perms.TODAS.filter(k => alvo[k] && !user.perms[k]);
+  if (excedentes.length) {
+    return { ok: false, erro: 'Você não pode conceder um perfil com mais permissões que o seu.' };
+  }
+  if (perfil.scope === 'all' && user.scope === 'team') {
+    return { ok: false, erro: 'Você só pode criar usuários restritos à sua equipe.' };
+  }
+  return { ok: true, perfil };
+}
+
+app.post('/api/users', podeUsuarios, h(async (req, res) => {
+  const { name, email, password, profile_id } = req.body || {};
+  if (!name || !email || !password || !profile_id) {
+    return res.status(400).json({ error: 'Preencha nome, e-mail, senha e perfil de acesso' });
+  }
   if (String(password).length < 6) return res.status(400).json({ error: 'A senha deve ter ao menos 6 caracteres' });
+  const check = await perfilAtribuivel(req.user, profile_id);
+  if (!check.ok) return res.status(403).json({ error: check.erro });
   try {
-    const r = await db.run('INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)',
-      cleanName(name), String(email).trim(), bcrypt.hashSync(String(password), 10), role);
+    // role fica como campo herdado; quem manda é o perfil. Nunca gravamos 'admin'
+    // por aqui — a administradora original é criada só na primeira execução.
+    const r = await db.run('INSERT INTO users (name, email, password_hash, role, profile_id) VALUES (?, ?, ?, ?, ?)',
+      cleanName(name), String(email).trim(), bcrypt.hashSync(String(password), 10), 'gestor', Number(profile_id));
     const id = r.lastInsertRowid;
-    if (role === 'lider' && Array.isArray(req.body.team) && req.body.team.length) {
+    if (check.perfil.scope === 'team' && Array.isArray(req.body.team) && req.body.team.length) {
       await db.batch(req.body.team.map(eid =>
         ['INSERT OR IGNORE INTO team_members (user_id, employee_id) VALUES (?, ?)', id, Number(eid)]));
     }
     res.json({ ok: true, id });
   } catch { res.status(400).json({ error: 'Já existe um usuário com este e-mail' }); }
 }));
-app.put('/api/users/:id', canManageUsers, h(async (req, res) => {
+
+app.put('/api/users/:id', podeUsuarios, h(async (req, res) => {
   const id = Number(req.params.id);
   const target = await db.get('SELECT * FROM users WHERE id = ?', id);
   if (!target) return res.status(404).json({ error: 'Usuário não encontrado' });
-  if (target.role === 'admin' && req.user.role !== 'admin') return res.status(403).json({ error: 'Sem permissão para alterar administradores' });
+  if (target.role === 'admin' && req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Sem permissão para alterar a administradora' });
+  }
   const b = req.body;
-  if (b.role && !['admin', 'supervisor', 'gestor', 'lider'].includes(b.role)) return res.status(400).json({ error: 'Perfil inválido' });
-  if (b.role === 'admin' && req.user.role !== 'admin') return res.status(403).json({ error: 'Apenas a administradora pode promover a administrador' });
-  await db.run('UPDATE users SET name = COALESCE(?, name), email = COALESCE(?, email), role = COALESCE(?, role), active = COALESCE(?, active) WHERE id = ?',
-    b.name ? cleanName(b.name) : null, b.email ? String(b.email).trim() : null, b.role ?? null, b.active ?? null, id);
+  if (b.profile_id) {
+    const check = await perfilAtribuivel(req.user, b.profile_id);
+    if (!check.ok) return res.status(403).json({ error: check.erro });
+    // A administradora original não pode ser rebaixada, para o sistema nunca
+    // ficar sem quem o administre.
+    if (target.role !== 'admin') await db.run('UPDATE users SET profile_id = ? WHERE id = ?', Number(b.profile_id), id);
+  }
+  if (b.password && String(b.password).length < 6) {
+    return res.status(400).json({ error: 'A senha deve ter ao menos 6 caracteres' });
+  }
+  await db.run('UPDATE users SET name = COALESCE(?, name), email = COALESCE(?, email), active = COALESCE(?, active) WHERE id = ?',
+    b.name ? cleanName(b.name) : null, b.email ? String(b.email).trim() : null, b.active ?? null, id);
   if (b.password) {
-    if (String(b.password).length < 6) return res.status(400).json({ error: 'A senha deve ter ao menos 6 caracteres' });
     await db.run('UPDATE users SET password_hash = ? WHERE id = ?', bcrypt.hashSync(String(b.password), 10), id);
   }
   if (Array.isArray(b.team)) {
@@ -412,15 +523,19 @@ app.put('/api/users/:id', canManageUsers, h(async (req, res) => {
   }
   res.json({ ok: true });
 }));
-app.delete('/api/users/:id', requireRole('admin'), h(async (req, res) => {
+app.delete('/api/users/:id', podeUsuarios, h(async (req, res) => {
   const id = Number(req.params.id);
   if (id === req.user.id) return res.status(400).json({ error: 'Você não pode excluir o próprio usuário' });
+  const alvo = await db.get('SELECT role FROM users WHERE id = ?', id);
+  if (alvo && alvo.role === 'admin' && req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Sem permissão para excluir a administradora' });
+  }
   await db.run('DELETE FROM users WHERE id = ?', id);
   res.json({ ok: true });
 }));
 
 // ---- Importação e exportação ----
-app.post('/api/import', canEdit, upload.single('file'), h(async (req, res) => {
+app.post('/api/import', requirePerm('importar'), upload.single('file'), h(async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Envie um arquivo .xlsx' });
   try {
     const stats = await importWorkbook(req.file.buffer, { clearRecords: req.body.clear === '1' });
@@ -429,7 +544,7 @@ app.post('/api/import', canEdit, upload.single('file'), h(async (req, res) => {
     res.status(400).json({ error: 'Falha na importação: ' + e.message });
   }
 }));
-app.get('/api/export', requireAuth, h(async (req, res) => {
+app.get('/api/export', requirePerm('exportar'), h(async (req, res) => {
   const buf = await exportWorkbook(await scopeFor(req.user));
   const name = 'Balanço Normativos ' + todayISO().split('-').reverse().join('_') + '.xlsx';
   res.setHeader('Content-Disposition', 'attachment; filename="' + encodeURIComponent(name) + '"');

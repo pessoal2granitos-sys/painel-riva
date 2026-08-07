@@ -49,15 +49,33 @@ async function loadAll() {
   renderTab();
 }
 
+// Atalho para consultar permissão do usuário logado.
+const pode = (chave) => !!(ME && ME.perms && ME.perms[chave]);
+// Permissões que dão acesso ao painel de administração.
+const ADMIN_PERMS = ['colaboradores', 'config', 'lancamentos', 'usuarios', 'perfis', 'importar'];
+
 function renderHeader() {
   const comps = DS.companies.map(c => c.short_name || c.name).join(' · ');
   $('headerSub').innerHTML = esc(comps) + ' &nbsp;|&nbsp; Posição em <b>' + brDate(DS.today) + '</b>';
   $('userName').textContent = ME.name;
-  $('userRole').textContent = ROLE_LABEL[ME.role] || ME.role;
+  $('userRole').textContent = ME.profile || ROLE_LABEL[ME.role] || ME.role;
   $('userAvatar').textContent = ME.name.trim().split(/\s+/).map(p => p[0]).slice(0, 2).join('').toUpperCase();
-  const canEdit = ME.role === 'admin' || ME.role === 'supervisor';
-  document.querySelectorAll('.only-edit').forEach(b => b.style.display = canEdit ? '' : 'none');
-  document.querySelectorAll('.only-users').forEach(b => b.style.display = canEdit ? '' : 'none');
+
+  // Cada aba aparece só se o perfil permitir. O servidor aplica as mesmas regras,
+  // então esconder aqui é conveniência, não a proteção em si.
+  document.querySelectorAll('#mainTabs button[data-perm]').forEach(b => {
+    b.style.display = pode(b.dataset.perm) ? '' : 'none';
+  });
+  document.querySelectorAll('#mainTabs .tab-admin').forEach(b => {
+    b.style.display = ADMIN_PERMS.some(pode) ? '' : 'none';
+  });
+
+  // Se a aba atual não é mais permitida, cai na primeira disponível.
+  const visiveis = [...document.querySelectorAll('#mainTabs button')].filter(b => b.style.display !== 'none');
+  if (!visiveis.some(b => b.dataset.tab === currentTab) && visiveis.length) {
+    currentTab = visiveis[0].dataset.tab;
+  }
+  document.querySelectorAll('#mainTabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === currentTab));
 }
 
 function fillFilters() {
@@ -153,9 +171,12 @@ function renderTab() {
   const dash = ['visao', 'vencimentos', 'cargos', 'custo', 'qualidade'].includes(currentTab);
   $('filterBar').style.display = dash ? '' : 'none';
   document.querySelectorAll('main > section').forEach(s => s.style.display = 'none');
-  $('tab-' + currentTab).style.display = '';
-  ({ visao: renderVisao, vencimentos: renderVencimentos, cargos: renderCargos, custo: renderCusto,
-     qualidade: renderQualidade, cadastros: renderCadastros, importar: renderImportar, usuarios: renderUsuarios }[currentTab])();
+  const alvo = $('tab-' + currentTab);
+  if (!alvo) return;
+  alvo.style.display = '';
+  const render = { visao: renderVisao, vencimentos: renderVencimentos, cargos: renderCargos,
+                   custo: renderCusto, qualidade: renderQualidade, admin: renderAdmin }[currentTab];
+  if (render) render();
 }
 
 // ===== Visão Geral =====
@@ -538,28 +559,182 @@ function renderQualidade() {
 }
 
 // ===== Cadastros =====
-let cadTab = 'colaboradores';
-function renderCadastros() {
-  const sub = {
-    colaboradores: renderCadColab, empresas: renderCadEmpresas, cargostrilhas: renderCadCargos,
-    treinamentos: renderCadTreinamentos, lancamentos: renderCadLancamentos,
-  };
-  $('tab-cadastros').innerHTML = `
-    <div class="admin-head"><h2>Cadastros</h2></div>
+// Painel de administração: reúne num só lugar tudo que configura o sistema.
+// Cada seção só aparece se o perfil do usuário permitir.
+let cadTab = null;
+const SECOES_ADMIN = [
+  { id: 'resumo',        nome: 'Resumo',              perm: null,            render: () => renderAdminResumo() },
+  { id: 'colaboradores', nome: 'Colaboradores',       perm: 'colaboradores', render: () => renderCadColab() },
+  { id: 'lancamentos',   nome: 'Lançamentos',         perm: 'lancamentos',   render: () => renderCadLancamentos() },
+  { id: 'empresas',      nome: 'Empresas',            perm: 'config',        render: () => renderCadEmpresas() },
+  { id: 'cargostrilhas', nome: 'Cargos e Trilhas',    perm: 'config',        render: () => renderCadCargos() },
+  { id: 'treinamentos',  nome: 'Treinamentos',        perm: 'config',        render: () => renderCadTreinamentos() },
+  { id: 'perfis',        nome: 'Perfis de Acesso',    perm: 'perfis',        render: () => renderPerfis() },
+  { id: 'usuarios',      nome: 'Usuários',            perm: 'usuarios',      render: () => renderUsuarios() },
+  { id: 'dados',         nome: 'Importar / Exportar', perm: 'importar',      render: () => renderImportar() },
+];
+
+function renderAdmin() {
+  const disponiveis = SECOES_ADMIN.filter(s => !s.perm || pode(s.perm));
+  if (!disponiveis.some(s => s.id === cadTab)) cadTab = disponiveis.length ? disponiveis[0].id : null;
+  $('tab-admin').innerHTML = `
+    <div class="admin-head">
+      <h2>⚙ Administração</h2>
+      <span class="hint">Tudo que configura o sistema em um só lugar.</span>
+    </div>
     <div class="subtabs" id="cadSubtabs">
-      <button data-s="colaboradores">Colaboradores</button>
-      <button data-s="empresas">Empresas</button>
-      <button data-s="cargostrilhas">Cargos e Trilhas</button>
-      <button data-s="treinamentos">Treinamentos (Matriz)</button>
-      <button data-s="lancamentos">Lançamentos</button>
+      ${disponiveis.map(s => `<button data-s="${s.id}">${esc(s.nome)}</button>`).join('')}
     </div>
     <div id="cadContent"></div>`;
   document.querySelectorAll('#cadSubtabs button').forEach(b => {
     b.classList.toggle('active', b.dataset.s === cadTab);
-    b.addEventListener('click', () => { cadTab = b.dataset.s; renderCadastros(); });
+    b.addEventListener('click', () => { cadTab = b.dataset.s; renderAdmin(); });
   });
-  sub[cadTab]();
+  const secao = disponiveis.find(s => s.id === cadTab);
+  if (secao) secao.render();
 }
+
+// Visão de abertura do painel: o estado do sistema em números.
+function renderAdminResumo() {
+  const emps = DS.employees.filter(e => !(e.demissao && e.demissao <= DS.today));
+  const trailCargos = new Set(DS.cargosWithTrail);
+  const semTrilha = emps.filter(e => !e.cargo_id || !trailCargos.has(e.cargo_id)).length;
+  const validos = ROWS.filter(r => r.status === 'VÁLIDO').length;
+  const atalho = (id, texto) => `<button class="btn-mini" onclick="irParaSecao('${id}')">${texto}</button>`;
+
+  $('cadContent').innerHTML = `
+    <div class="kpis">
+      ${kpi('Colaboradores ativos', fmtN(emps.length), 'na base do sistema')}
+      ${kpi('Empresas', fmtN(DS.companies.length), 'cadastradas')}
+      ${kpi('Cargos', fmtN(DS.cargos.length), fmtN(trailCargos.size) + ' com trilha definida')}
+      ${kpi('Treinamentos', fmtN(DS.trainings.length), 'na matriz')}
+      ${kpi('Aderência geral', fmtPct(pct(validos, ROWS.length)), fmtN(validos) + ' de ' + fmtN(ROWS.length),
+            pct(validos, ROWS.length) >= 95 ? 'green' : pct(validos, ROWS.length) >= 75 ? 'amber' : 'red')}
+      ${kpi('Sem trilha', fmtN(semTrilha), 'colaboradores a revisar', semTrilha ? 'amber' : 'green')}
+    </div>
+    <div class="grid cols-2">
+      <div class="card">
+        <h3>Por onde começar</h3>
+        <p class="hint" style="margin-bottom:12px">As tarefas mais comuns do dia a dia.</p>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          ${pode('lancamentos') ? `<div><b>Registrar um treinamento realizado</b><div class="hint">Busque a pessoa e lance a data. O vencimento é calculado sozinho.</div>${atalho('lancamentos', 'Ir para Lançamentos')}</div>` : ''}
+          ${pode('importar') ? `<div><b>Atualizar tudo de uma vez</b><div class="hint">Envie a planilha e o sistema atualiza os registros existentes.</div>${atalho('dados', 'Ir para Importar / Exportar')}</div>` : ''}
+          ${pode('usuarios') ? `<div><b>Liberar acesso a um gestor</b><div class="hint">Crie um login e escolha o perfil que define o que ele enxerga.</div>${atalho('usuarios', 'Ir para Usuários')}</div>` : ''}
+          ${pode('perfis') ? `<div><b>Criar um perfil de acesso</b><div class="hint">Defina quais painéis e ações cada tipo de usuário terá.</div>${atalho('perfis', 'Ir para Perfis de Acesso')}</div>` : ''}
+        </div>
+      </div>
+      <div class="card">
+        <h3>Situação do cadastro</h3>
+        ${semTrilha ? `<p class="hint" style="color:var(--red)"><b>${fmtN(semTrilha)} colaborador(es)</b> sem trilha de treinamentos definida — os pendentes deles podem estar subcontados. Veja a aba <b>Qualidade dos Dados</b>.</p>` :
+          '<p class="hint">Todos os colaboradores têm trilha definida. ✔</p>'}
+        <div style="margin-top:14px">
+          ${hbars(DS.companies.map(c => {
+            const n = emps.filter(e => e.company_id === c.id).length;
+            return { label: c.short_name || c.name, value: n };
+          }).sort((a, b) => b.value - a.value), () => 'var(--navy)')}
+        </div>
+      </div>
+    </div>`;
+}
+
+window.irParaSecao = (id) => { cadTab = id; renderAdmin(); };
+
+// ---- Perfis de acesso ----
+let CATALOGO = null;   // painéis e ações disponíveis, vindos do servidor
+let PERFIS = [];
+
+async function renderPerfis() {
+  const dados = await api('/api/profiles');
+  PERFIS = dados.profiles;
+  CATALOGO = dados.catalogo;
+
+  const marca = (ok) => ok ? '<span style="color:var(--green);font-weight:700">✔</span>'
+                           : '<span style="color:var(--line)">—</span>';
+  $('cadContent').innerHTML = `
+    <div class="toolbar">
+      <button class="btn-primary" onclick="editarPerfil(null)">+ Novo perfil</button>
+      <span class="hint">O perfil define quais painéis de indicadores e quais ações cada usuário tem.
+      Os quatro perfis do sistema podem ser ajustados, mas não excluídos.</span>
+    </div>
+    <div class="card">
+      <div class="tbl-wrap" style="max-height:560px"><table class="tbl"><thead><tr>
+        <th>Perfil</th><th>Alcance</th>
+        ${CATALOGO.paineis.map(p => `<th style="text-align:center" title="${esc(p.desc)}">${esc(p.nome.split(' ')[0])}</th>`).join('')}
+        <th style="text-align:center">Ações</th><th style="text-align:center">Usuários</th><th></th>
+      </tr></thead><tbody>
+        ${PERFIS.map(p => {
+          const nAcoes = CATALOGO.acoes.filter(a => p.permissions[a.chave]).length;
+          return `<tr>
+            <td><b>${esc(p.name)}</b>${p.is_system ? ' <span class="badge role">padrão</span>' : ''}
+                <div class="hint">${esc(p.description || '')}</div></td>
+            <td>${p.scope === 'team' ? '<span class="badge pendente">só a equipe</span>' : '<span class="badge valido">todos</span>'}</td>
+            ${CATALOGO.paineis.map(pa => `<td style="text-align:center">${marca(p.permissions[pa.chave])}</td>`).join('')}
+            <td style="text-align:center">${nAcoes} de ${CATALOGO.acoes.length}</td>
+            <td style="text-align:center">${p.usuarios}</td>
+            <td style="white-space:nowrap">
+              <button class="btn-mini" onclick="editarPerfil(${p.id})">Editar</button>
+              ${p.is_system ? '' : `<button class="btn-mini danger" onclick="excluirPerfil(${p.id})">Excluir</button>`}
+            </td></tr>`;
+        }).join('')}
+      </tbody></table></div>
+      <p class="hint" style="margin-top:12px">
+        <b>Alcance</b> define de quem o usuário vê os dados: <i>todos</i> os colaboradores ou
+        <i>só a equipe</i> que você atribuir a ele na tela de Usuários.
+      </p>
+    </div>`;
+}
+
+window.editarPerfil = (id) => {
+  const p = id ? PERFIS.find(x => x.id === id) : null;
+  const sistema = p && p.is_system;
+  const admin = p && p.name === 'Administradora';
+  const grupo = (titulo, itens, ajuda) => `
+    <label>${titulo}</label>
+    <p class="hint" style="margin:-2px 0 6px">${ajuda}</p>
+    <div class="checklist">
+      ${itens.map(i => `<label title="${esc(i.desc)}">
+        <input type="checkbox" class="permChk" value="${i.chave}"
+          ${p && p.permissions[i.chave] ? 'checked' : ''} ${admin ? 'disabled' : ''}>
+        <span><b>${esc(i.nome)}</b><br><span class="hint">${esc(i.desc)}</span></span>
+      </label>`).join('')}
+    </div>`;
+
+  openModal(p ? 'Perfil — ' + p.name : 'Novo perfil de acesso', `
+    <label>Nome do perfil</label>
+    <input id="mNome" value="${esc(p?.name || '')}" ${sistema ? 'disabled' : ''}
+      placeholder="ex.: Gestor de Produção">
+    ${sistema ? '<p class="hint">Este é um perfil padrão: o nome não muda, mas as permissões sim.</p>' : ''}
+    <label>Descrição</label>
+    <input id="mDesc" value="${esc(p?.description || '')}" placeholder="para que serve este perfil">
+    <label>Alcance dos dados</label>
+    <select id="mScope" ${admin ? 'disabled' : ''}>
+      <option value="all" ${p && p.scope === 'all' ? 'selected' : ''}>Todos os colaboradores</option>
+      <option value="team" ${p && p.scope === 'team' ? 'selected' : ''}>Somente a equipe atribuída ao usuário</option>
+    </select>
+    ${admin ? '<p class="hint" style="color:var(--amber)">O perfil da administradora sempre mantém acesso total — é o que garante que o sistema nunca fique sem quem o administre.</p>' : ''}
+    ${grupo('Painéis de indicadores que este perfil enxerga', CATALOGO.paineis,
+            'Marque quais abas de dashboard ficam visíveis.')}
+    ${grupo('Ações que este perfil pode executar', CATALOGO.acoes,
+            'Sem nenhuma ação marcada, o usuário apenas visualiza os painéis.')}`,
+    [{ label: 'Salvar', cls: 'btn-primary', onClick: async () => {
+      const permissions = {};
+      document.querySelectorAll('.permChk').forEach(c => { permissions[c.value] = c.checked; });
+      const body = { name: $('mNome').value, description: $('mDesc').value,
+                     scope: $('mScope').value, permissions };
+      if (p) await api('/api/profiles/' + p.id, { method: 'PUT', body: JSON.stringify(body) });
+      else await api('/api/profiles', { method: 'POST', body: JSON.stringify(body) });
+      closeModal(); toast('Perfil salvo');
+      await loadAll();
+      cadTab = 'perfis'; renderAdmin();
+    } }]);
+};
+
+window.excluirPerfil = async (id) => {
+  const p = PERFIS.find(x => x.id === id);
+  if (!confirm('Excluir o perfil "' + p.name + '"?')) return;
+  await api('/api/profiles/' + id, { method: 'DELETE' });
+  toast('Perfil excluído'); renderPerfis();
+};
 
 function empPendCounts() {
   const m = {};
@@ -586,7 +761,7 @@ function renderCadColab() {
         <td style="white-space:nowrap">
           <button class="btn-mini" onclick="editEmployee(${e.id})">Editar</button>
           <button class="btn-mini" onclick="openLancamentos(${e.id})">Lançamentos</button>
-          ${ME.role === 'admin' ? `<button class="btn-mini danger" onclick="delEmployee(${e.id})">Excluir</button>` : ''}
+          ${pode('excluir') ? `<button class="btn-mini danger" onclick="delEmployee(${e.id})">Excluir</button>` : ''}
         </td></tr>`;
     }).join('') || '<tr><td colspan="9" class="empty">Nenhum colaborador</td></tr>';
   };
@@ -656,7 +831,7 @@ function renderCadEmpresas() {
           <td style="text-align:center">${c.sort_order}</td>
           <td style="text-align:center">${nE}</td><td style="text-align:center">${nC}</td>
           <td style="white-space:nowrap"><button class="btn-mini" onclick="editCompany(${c.id})">Editar</button>
-          ${ME.role === 'admin' ? `<button class="btn-mini danger" onclick="delCompany(${c.id})">Excluir</button>` : ''}</td></tr>`;
+          ${pode('excluir') ? `<button class="btn-mini danger" onclick="delCompany(${c.id})">Excluir</button>` : ''}</td></tr>`;
       }).join('')}
     </tbody></table></div></div>`;
 }
@@ -699,7 +874,7 @@ function renderCadCargos() {
       else trailCell = '<span class="badge vencido">SEM TRILHA</span>';
       return `<tr><td>${esc(c.name)}</td><td>${esc(comp?.name || '')}</td><td>${trailCell}</td><td style="text-align:center">${nE}</td>
         <td style="white-space:nowrap"><button class="btn-mini" onclick="editCargo(${c.id})">Editar trilha</button>
-        ${ME.role === 'admin' ? `<button class="btn-mini danger" onclick="delCargo(${c.id})">Excluir</button>` : ''}</td></tr>`;
+        ${pode('excluir') ? `<button class="btn-mini danger" onclick="delCargo(${c.id})">Excluir</button>` : ''}</td></tr>`;
     }).join('') || '<tr><td colspan="5" class="empty">Nenhum cargo</td></tr>';
   };
   $('cadContent').innerHTML = `
@@ -770,7 +945,7 @@ function renderCadTreinamentos() {
         <td style="text-align:center">${t.custo_formacao ? fmtMoney(t.custo_formacao) : '—'}</td>
         <td style="text-align:center">${t.custo_reciclagem ? fmtMoney(t.custo_reciclagem) : '—'}</td>
         <td style="white-space:nowrap"><button class="btn-mini" onclick="editTraining(${t.id})">Editar</button>
-        ${ME.role === 'admin' ? `<button class="btn-mini danger" onclick="delTraining(${t.id})">Excluir</button>` : ''}</td></tr>`).join('')}
+        ${pode('excluir') ? `<button class="btn-mini danger" onclick="delTraining(${t.id})">Excluir</button>` : ''}</td></tr>`).join('')}
     </tbody></table></div></div>`;
 }
 window.editTraining = (id) => {
@@ -914,12 +1089,14 @@ window.openRecordModal = function openRecordModal(empId, rec, preTrainingId = nu
 
 // ===== Importar / Exportar =====
 function renderImportar() {
-  $('tab-importar').innerHTML = `
+  $('cadContent').innerHTML = `
     <div class="grid cols-2">
       <div class="card">
         <h3>Exportar planilha</h3>
         <p class="hint">Gera um arquivo Excel no mesmo formato da planilha atual, com as abas <b>Base de Dados</b> (incluindo linhas PENDENTE), <b>Matriz de C.H.</b> e <b>Trilha por Cargo</b>, refletindo a posição de hoje.</p>
-        <br><a class="btn-primary" style="text-decoration:none;display:inline-block" href="/api/export">⬇ Baixar Balanço Normativos (.xlsx)</a>
+        <br>${pode('exportar')
+          ? '<a class="btn-primary" style="text-decoration:none;display:inline-block" href="/api/export">⬇ Baixar Balanço Normativos (.xlsx)</a>'
+          : '<span class="hint">Seu perfil não permite exportar.</span>'}
       </div>
       <div class="card">
         <h3>Importar planilha</h3>
@@ -952,27 +1129,30 @@ function renderImportar() {
 
 // ===== Usuários =====
 async function renderUsuarios() {
-  const { users, teams } = await api('/api/users');
+  const [{ users, teams }, dados] = await Promise.all([api('/api/users'), api('/api/profiles')]);
+  PERFIS = dados.profiles;
+  CATALOGO = dados.catalogo;
   const teamCount = {};
   for (const t of teams) teamCount[t.user_id] = (teamCount[t.user_id] || 0) + 1;
-  $('tab-usuarios').innerHTML = `
-    <div class="admin-head"><h2>Usuários e Acessos</h2>
-      <button class="btn-primary" onclick="editUser(null)">+ Novo usuário</button></div>
+
+  $('cadContent').innerHTML = `
+    <div class="toolbar">
+      <button class="btn-primary" onclick="editUser(null)">+ Novo usuário</button>
+      <span class="hint">Um login por pessoa. O perfil define o que cada um enxerga —
+      ajuste os perfis na aba <b>Perfis de Acesso</b>.</span>
+    </div>
     <div class="card">
-      <p class="hint" style="margin-bottom:12px">
-        <b>Administradora</b>: controle total. · <b>Supervisor</b>: configura cadastros, lançamentos e usuários (exceto administradores). ·
-        <b>Gestor</b>: visualiza todos os painéis. · <b>Líder</b>: visualiza apenas o painel da equipe atribuída a ele.
-      </p>
-      <div class="tbl-wrap"><table class="tbl"><thead><tr>
+      <div class="tbl-wrap" style="max-height:560px"><table class="tbl"><thead><tr>
         <th>Nome</th><th>E-mail</th><th>Perfil</th><th>Equipe</th><th>Status</th><th>Ações</th></tr></thead><tbody>
         ${users.map(u => `<tr>
-          <td>${esc(u.name)}</td><td>${esc(u.email)}</td>
-          <td><span class="badge role ${u.role}">${ROLE_LABEL[u.role]}</span></td>
-          <td>${u.role === 'lider' ? (teamCount[u.id] || 0) + ' colaboradores' : '—'}</td>
+          <td>${esc(u.name)}${u.role === 'admin' ? ' <span class="badge role admin">principal</span>' : ''}</td>
+          <td>${esc(u.email)}</td>
+          <td><span class="badge role">${esc(u.profile_name || '—')}</span></td>
+          <td>${u.profile_scope === 'team' ? (teamCount[u.id] || 0) + ' colaboradores' : 'todos'}</td>
           <td>${u.active ? '<span class="badge valido">ATIVO</span>' : '<span class="badge vencido">INATIVO</span>'}</td>
           <td style="white-space:nowrap">
-            <button class="btn-mini" onclick='editUser(${JSON.stringify(u)}, ${JSON.stringify(teams.filter(t => t.user_id === u.id).map(t => t.employee_id))})'>Editar</button>
-            ${ME.role === 'admin' && u.id !== ME.id ? `<button class="btn-mini danger" onclick="delUser(${u.id})">Excluir</button>` : ''}
+            <button class="btn-mini" onclick='editUser(${esc(JSON.stringify(u))}, ${esc(JSON.stringify(teams.filter(t => t.user_id === u.id).map(t => t.employee_id)))})'>Editar</button>
+            ${u.id !== ME.id && (u.role !== 'admin' || ME.role === 'admin') ? `<button class="btn-mini danger" onclick="delUser(${u.id})">Excluir</button>` : ''}
           </td></tr>`).join('')}
       </tbody></table></div>
     </div>`;
@@ -981,28 +1161,39 @@ async function renderUsuarios() {
 window.editUser = (u, teamIds = []) => {
   const isNew = !u;
   const teamSet = new Set(teamIds);
-  const roleOpts = ['admin', 'supervisor', 'gestor', 'lider']
-    .filter(r => ME.role === 'admin' || r !== 'admin')
-    .map(r => `<option value="${r}" ${u && u.role === r ? 'selected' : ''}>${ROLE_LABEL[r]}</option>`).join('');
+  // Só é possível conceder um perfil cujas permissões você mesma possui — o
+  // servidor aplica a mesma regra, isto aqui é para não oferecer o impossível.
+  const atribuiveis = PERFIS.filter(p => CATALOGO && [...CATALOGO.paineis, ...CATALOGO.acoes]
+    .every(i => !p.permissions[i.chave] || pode(i.chave)));
+  const perfilOpts = atribuiveis
+    .map(p => `<option value="${p.id}" ${u && u.profile_id === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
+  const ehPrincipal = u && u.role === 'admin';
+
   openModal(isNew ? 'Novo usuário' : 'Editar usuário — ' + u.name, `
     <label>Nome</label><input id="mNome" value="${esc(u?.name || '')}">
     <label>E-mail (login)</label><input type="email" id="mEmail" value="${esc(u?.email || '')}">
     <div class="row2">
-      <div><label>Perfil de acesso</label><select id="mRole">${roleOpts}</select></div>
-      <div><label>${isNew ? 'Senha' : 'Nova senha (vazio = manter)'}</label><input type="text" id="mSenha" placeholder="mínimo 6 caracteres"></div>
+      <div><label>Perfil de acesso</label>
+        <select id="mPerfil" ${ehPrincipal ? 'disabled' : ''}>${perfilOpts}</select></div>
+      <div><label>${isNew ? 'Senha' : 'Nova senha (vazio = manter)'}</label>
+        <input type="text" id="mSenha" placeholder="mínimo 6 caracteres"></div>
     </div>
+    <p class="hint" id="mPerfilDesc"></p>
+    ${ehPrincipal ? '<p class="hint" style="color:var(--amber)">Esta é a administradora principal: o perfil dela não pode ser alterado.</p>' : ''}
     ${!isNew ? `<label style="display:flex;align-items:center;gap:8px;text-transform:none"><input type="checkbox" id="mAtivo" style="width:auto;accent-color:var(--orange)" ${u.active ? 'checked' : ''}> Usuário ativo (desmarque para bloquear o acesso)</label>` : ''}
     <div id="teamBox" style="display:none">
-      <label>Equipe do líder (colaboradores que ele enxerga)</label>
+      <label>Equipe (colaboradores que este usuário enxerga)</label>
       <input type="search" id="teamSearch" placeholder="filtrar…" style="margin-bottom:6px">
       <div class="checklist" id="teamList"></div>
     </div>`,
     [{ label: 'Salvar', cls: 'btn-primary', onClick: async () => {
-      const role = $('mRole').value;
-      const body = { name: $('mNome').value, email: $('mEmail').value, role };
+      const body = { name: $('mNome').value, email: $('mEmail').value, profile_id: Number($('mPerfil').value) };
       if ($('mSenha').value) body.password = $('mSenha').value;
       if (!isNew) body.active = $('mAtivo').checked ? 1 : 0;
-      if (role === 'lider') body.team = [...document.querySelectorAll('.teamChk:checked')].map(x => Number(x.value));
+      const perfil = PERFIS.find(p => p.id === Number($('mPerfil').value));
+      if (perfil && perfil.scope === 'team') {
+        body.team = [...document.querySelectorAll('.teamChk:checked')].map(x => Number(x.value));
+      }
       if (isNew) {
         if (!body.password) return toast('Defina uma senha', true);
         await api('/api/users', { method: 'POST', body: JSON.stringify(body) });
@@ -1011,6 +1202,7 @@ window.editUser = (u, teamIds = []) => {
       }
       closeModal(); toast('Usuário salvo'); renderUsuarios();
     } }]);
+
   const renderTeam = (q = '') => {
     $('teamList').innerHTML = DS.employees
       .filter(e => !q || e.name.toLowerCase().includes(q))
@@ -1019,13 +1211,16 @@ window.editUser = (u, teamIds = []) => {
       if (chk.checked) teamSet.add(Number(chk.value)); else teamSet.delete(Number(chk.value));
     }));
   };
-  const syncRole = () => {
-    $('teamBox').style.display = $('mRole').value === 'lider' ? '' : 'none';
-    if ($('mRole').value === 'lider') renderTeam();
+  const syncPerfil = () => {
+    const perfil = PERFIS.find(p => p.id === Number($('mPerfil').value));
+    $('mPerfilDesc').textContent = perfil ? (perfil.description || '') : '';
+    const equipe = perfil && perfil.scope === 'team';
+    $('teamBox').style.display = equipe ? '' : 'none';
+    if (equipe) renderTeam();
   };
-  $('mRole').addEventListener('change', syncRole);
+  $('mPerfil').addEventListener('change', syncPerfil);
   $('teamSearch').addEventListener('input', (e) => renderTeam(e.target.value.trim().toLowerCase()));
-  syncRole();
+  syncPerfil();
 };
 window.delUser = async (id) => {
   if (!confirm('Excluir este usuário? Ele perderá o acesso imediatamente.')) return;

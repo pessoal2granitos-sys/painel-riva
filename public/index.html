@@ -27,14 +27,12 @@
       </div>
     </div>
     <nav class="tabs" id="mainTabs">
-      <button data-tab="visao" class="active">Visão Geral</button>
-      <button data-tab="vencimentos">Vencimentos</button>
-      <button data-tab="cargos">Cargos e Empresas</button>
-      <button data-tab="custo">Carga Horária e Custo</button>
-      <button data-tab="qualidade">Qualidade dos Dados</button>
-      <button data-tab="cadastros" class="only-edit" style="display:none">Cadastros</button>
-      <button data-tab="importar" class="only-edit" style="display:none">Importar / Exportar</button>
-      <button data-tab="usuarios" class="only-users" style="display:none">Usuários e Acessos</button>
+      <button data-tab="visao" data-perm="visao" class="active">Visão Geral</button>
+      <button data-tab="vencimentos" data-perm="vencimentos">Vencimentos</button>
+      <button data-tab="cargos" data-perm="cargos">Cargos e Empresas</button>
+      <button data-tab="custo" data-perm="custo">Carga Horária e Custo</button>
+      <button data-tab="qualidade" data-perm="qualidade">Qualidade dos Dados</button>
+      <button data-tab="admin" class="tab-admin">⚙ Administração</button>
     </nav>
   </header>
 
@@ -70,9 +68,7 @@
     <section id="tab-cargos" style="display:none"></section>
     <section id="tab-custo" style="display:none"></section>
     <section id="tab-qualidade" style="display:none"></section>
-    <section id="tab-cadastros" style="display:none"></section>
-    <section id="tab-importar" style="display:none"></section>
-    <section id="tab-usuarios" style="display:none"></section>
+    <section id="tab-admin" style="display:none"></section>
   </main>
 
   <div class="modal-back" id="modalBack">

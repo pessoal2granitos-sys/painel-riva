@@ -122,6 +122,15 @@ CREATE TABLE IF NOT EXISTS team_members (
   employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
   PRIMARY KEY (user_id, employee_id)
 );
+-- Perfis de acesso: definem quais painéis e ações cada usuário enxerga.
+CREATE TABLE IF NOT EXISTS profiles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  description TEXT,
+  scope TEXT NOT NULL DEFAULT 'all' CHECK (scope IN ('all','team')),
+  permissions TEXT NOT NULL DEFAULT '{}',
+  is_system INTEGER NOT NULL DEFAULT 0
+);
 `;
 
 let ready = null;
@@ -137,6 +146,25 @@ function init() {
       if (!cols.includes('sort_order')) await run('ALTER TABLE companies ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 100');
       const cargoCols = (await all('PRAGMA table_info(cargos)')).map(c => c.name);
       if (!cargoCols.includes('trail_source_id')) await run('ALTER TABLE cargos ADD COLUMN trail_source_id INTEGER REFERENCES cargos(id)');
+      const userCols = (await all('PRAGMA table_info(users)')).map(c => c.name);
+      if (!userCols.includes('profile_id')) await run('ALTER TABLE users ADD COLUMN profile_id INTEGER REFERENCES profiles(id)');
+
+      // Cria os perfis padrão e liga os usuários antigos ao perfil equivalente.
+      const { PADRAO, POR_PAPEL } = require('./perms');
+      const existentes = await all('SELECT id, name FROM profiles');
+      const porNome = new Map(existentes.map(p => [p.name, p.id]));
+      for (const p of PADRAO) {
+        if (!porNome.has(p.name)) {
+          const r = await run('INSERT INTO profiles (name, description, scope, permissions, is_system) VALUES (?, ?, ?, ?, 1)',
+            p.name, p.description, p.scope, JSON.stringify(p.permissions));
+          porNome.set(p.name, r.lastInsertRowid);
+        }
+      }
+      const semPerfil = await all('SELECT id, role FROM users WHERE profile_id IS NULL');
+      for (const u of semPerfil) {
+        const id = porNome.get(POR_PAPEL[u.role]);
+        if (id) await run('UPDATE users SET profile_id = ? WHERE id = ?', id, u.id);
+      }
     })();
   }
   return ready;
