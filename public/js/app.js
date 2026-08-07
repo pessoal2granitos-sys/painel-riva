@@ -29,8 +29,32 @@ async function api(url, opts = {}) {
   const res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts });
   if (res.status === 401) { location.href = '/login'; throw new Error('sessão expirada'); }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'Erro na requisição');
+  if (!res.ok) {
+    // Toda falha vira aviso visível: nenhuma ação pode "não fazer nada" em silêncio.
+    const err = new Error(data.error || 'Erro na requisição');
+    err.jaAvisado = true;
+    toast(err.message, true);
+    throw err;
+  }
   return data;
+}
+
+// Confirmação com visual do sistema. A caixa nativa do navegador pode ser
+// silenciada em "impedir novas caixas de diálogo" e aí a exclusão parece morta.
+function confirmar(msg, titulo = 'Confirmar') {
+  return new Promise((resolve) => {
+    $('confirmTitle').textContent = titulo;
+    $('confirmMsg').textContent = msg;
+    $('confirmBack').classList.add('open');
+    const fechar = (resposta) => {
+      $('confirmBack').classList.remove('open');
+      $('confirmSim').onclick = null;
+      $('confirmNao').onclick = null;
+      resolve(resposta);
+    };
+    $('confirmSim').onclick = () => fechar(true);
+    $('confirmNao').onclick = () => fechar(false);
+  });
 }
 
 async function loadAll() {
@@ -731,7 +755,7 @@ window.editarPerfil = (id) => {
 
 window.excluirPerfil = async (id) => {
   const p = PERFIS.find(x => x.id === id);
-  if (!confirm('Excluir o perfil "' + p.name + '"?')) return;
+  if (!await confirmar('Excluir o perfil "' + p.name + '"?')) return;
   await api('/api/profiles/' + id, { method: 'DELETE' });
   toast('Perfil excluído'); renderPerfis();
 };
@@ -812,7 +836,7 @@ window.editEmployee = (id) => {
 
 window.delEmployee = async (id) => {
   const e = DS.employees.find(x => x.id === id);
-  if (!confirm('Excluir DEFINITIVAMENTE ' + e.name + ' e todos os seus lançamentos?\n\nSe o colaborador foi desligado, prefira registrar a data de demissão em Editar.')) return;
+  if (!await confirmar('Excluir DEFINITIVAMENTE ' + e.name + ' e todos os seus lançamentos?\n\nSe o colaborador foi desligado, prefira registrar a data de demissão em Editar.')) return;
   await api('/api/employees/' + id, { method: 'DELETE' });
   toast('Colaborador excluído'); await loadAll();
 };
@@ -851,7 +875,7 @@ window.editCompany = (id) => {
     } }]);
 };
 window.delCompany = async (id) => {
-  if (!confirm('Excluir esta empresa? Só é possível se não houver colaboradores vinculados.')) return;
+  if (!await confirmar('Excluir esta empresa? Só é possível se não houver colaboradores vinculados.')) return;
   await api('/api/companies/' + id, { method: 'DELETE' });
   toast('Empresa excluída'); await loadAll();
 };
@@ -926,7 +950,7 @@ window.editCargo = (id) => {
     } }]);
 };
 window.delCargo = async (id) => {
-  if (!confirm('Excluir este cargo? Só é possível se nenhum colaborador o utilizar.')) return;
+  if (!await confirmar('Excluir este cargo? Só é possível se nenhum colaborador o utilizar.')) return;
   await api('/api/cargos/' + id, { method: 'DELETE' });
   toast('Cargo excluído'); await loadAll();
 };
@@ -979,7 +1003,7 @@ window.editTraining = (id) => {
     } }]);
 };
 window.delTraining = async (id) => {
-  if (!confirm('Excluir este treinamento? Só é possível se não houver lançamentos.')) return;
+  if (!await confirmar('Excluir este treinamento? Só é possível se não houver lançamentos.')) return;
   await api('/api/trainings/' + id, { method: 'DELETE' });
   toast('Treinamento excluído'); await loadAll();
 };
@@ -1043,7 +1067,7 @@ window.openLancamentos = async (empId) => {
 };
 
 window.delRequirement = async (empId, trainingId) => {
-  if (!confirm('Remover a exigência individual deste treinamento para este colaborador?')) return;
+  if (!await confirmar('Remover a exigência individual deste treinamento para este colaborador?')) return;
   await api('/api/requirements/' + empId + '/' + trainingId, { method: 'DELETE' });
   toast('Exigência removida'); await loadAll(); openLancamentos(empId);
 };
@@ -1054,7 +1078,7 @@ window.editRecord = async (recId, empId) => {
   openRecordModal(empId, rec);
 };
 window.delRecord = async (recId, empId) => {
-  if (!confirm('Excluir este lançamento?')) return;
+  if (!await confirmar('Excluir este lançamento?')) return;
   await api('/api/records/' + recId, { method: 'DELETE' });
   toast('Lançamento excluído'); await loadAll(); openLancamentos(empId);
 };
@@ -1113,7 +1137,7 @@ function renderImportar() {
   $('btnImport').addEventListener('click', async () => {
     const f = $('impFile').files[0];
     if (!f) return toast('Selecione um arquivo .xlsx', true);
-    if ($('impClear').checked && !confirm('Tem certeza? TODOS os lançamentos atuais serão apagados e substituídos pelos da planilha.')) return;
+    if ($('impClear').checked && !(await confirmar('Tem certeza? TODOS os lançamentos atuais serão apagados e substituídos pelos da planilha.'))) return;
     const fd = new FormData();
     fd.append('file', f);
     fd.append('clear', $('impClear').checked ? '1' : '0');
@@ -1223,7 +1247,7 @@ window.editUser = (u, teamIds = []) => {
   syncPerfil();
 };
 window.delUser = async (id) => {
-  if (!confirm('Excluir este usuário? Ele perderá o acesso imediatamente.')) return;
+  if (!await confirmar('Excluir este usuário? Ele perderá o acesso imediatamente.')) return;
   await api('/api/users/' + id, { method: 'DELETE' });
   toast('Usuário excluído'); renderUsuarios();
 };
@@ -1241,7 +1265,7 @@ function openModal(title, bodyHTML, buttons = []) {
     const btn = document.createElement('button');
     btn.className = b.cls || 'btn-primary'; btn.textContent = b.label;
     btn.addEventListener('click', async () => {
-      try { await b.onClick(); } catch (e) { toast(e.message, true); }
+      try { await b.onClick(); } catch (e) { if (!e.jaAvisado) toast(e.message, true); }
     });
     $('modalFoot').appendChild(btn);
   }
@@ -1284,6 +1308,12 @@ $('btnMyPassword').addEventListener('click', () => {
       await api('/api/me/password', { method: 'POST', body: JSON.stringify({ current: $('mAtual').value, next: $('mNova').value }) });
       closeModal(); toast('Senha alterada com sucesso');
     } }]);
+});
+
+// Rede de segurança: qualquer falha não tratada vira aviso visível.
+window.addEventListener('unhandledrejection', (e) => {
+  const err = e.reason || {};
+  if (!err.jaAvisado) toast(err.message || 'Algo deu errado. Tente novamente.', true);
 });
 
 loadAll().catch(e => { console.error(e); });

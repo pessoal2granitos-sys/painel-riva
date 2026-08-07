@@ -78,6 +78,18 @@
       <div class="m-foot" id="modalFoot"></div>
     </div>
   </div>
+  <!-- Confirmação própria: a nativa do navegador pode ser silenciada pelo usuário
+       sem ele perceber, e aí os botões de exclusão parecem simplesmente não funcionar. -->
+  <div class="modal-back" id="confirmBack" style="z-index:150">
+    <div class="modal" style="width:420px">
+      <div class="m-head"><h3 id="confirmTitle">Confirmar</h3></div>
+      <div class="m-body"><p id="confirmMsg" style="font-size:13.5px;line-height:1.6;white-space:pre-line"></p></div>
+      <div class="m-foot">
+        <button class="btn-ghost" id="confirmNao">Cancelar</button>
+        <button class="btn-primary" id="confirmSim">Confirmar</button>
+      </div>
+    </div>
+  </div>
   <div class="toast" id="toast"></div>
 
   <script src="/js/chart.umd.js"></script>
