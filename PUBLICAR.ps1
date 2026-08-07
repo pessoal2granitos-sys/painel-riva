@@ -75,17 +75,27 @@ if (-not (Test-Path $VERCEL)) {
 
 # ---------------------------------------------------------------- 1. Login
 Titulo '1 de 5 - Entrar na Vercel'
-$logado = $false
-try { $quem = (Vercel whoami 2>&1 | Out-String).Trim(); if ($quem -and $quem -notmatch 'not authenticated|Error') { $logado = $true } } catch {}
+# Sem sessao, 'vercel whoami' fica esperando resposta e trava o script. Por isso
+# a verificacao e feita pelo arquivo de credenciais, que nao bloqueia.
+function Sessao-Vercel {
+  foreach ($p in @("$env:APPDATA\com.vercel.cli\auth.json",
+                   "$env:LOCALAPPDATA\com.vercel.cli\auth.json",
+                   "$env:USERPROFILE\.vercel\auth.json")) {
+    if (Test-Path $p) { return $p }
+  }
+  return $null
+}
 
-if ($logado) {
-  Ok "Ja conectada como: $($quem -split "`n" | Select-Object -Last 1)"
+if (Sessao-Vercel) {
+  $quem = (Vercel whoami 2>&1 | Out-String).Trim()
+  Ok "Ja conectada como: $(($quem -split "`n" | Where-Object { $_ -and $_ -notmatch 'Vercel CLI' } | Select-Object -Last 1))"
 } else {
-  Write-Host '  Vai abrir o navegador para voce entrar (ou criar a conta, e gratis).'
-  Write-Host '  Pode entrar com o Google usando seu e-mail de sempre.'
+  Write-Host '  Voce precisa conectar o computador a sua conta Vercel.'
+  Write-Host '  Escolha "Continue with GitHub" ou "Continue with Google" com as setas'
+  Write-Host '  do teclado, aperte Enter, e aprove no navegador que vai abrir.'
   Write-Host ''
   Vercel login
-  if ($LASTEXITCODE -ne 0) { Erro 'Login nao concluido.'; Read-Host 'Enter para sair'; exit 1 }
+  if (-not (Sessao-Vercel)) { Erro 'Login nao concluido. Rode o arquivo de novo.'; Read-Host 'Enter para sair'; exit 1 }
   Ok 'Conectada.'
 }
 
