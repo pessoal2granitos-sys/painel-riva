@@ -190,6 +190,20 @@ table.tbl tbody tr:hover { background: #fef4ec; }
   padding: 7px 16px; font-size: 12.5px; font-weight: 600;
 }
 .subtabs button.active { background: var(--navy); border-color: var(--navy); color: #fff; }
+/* Barra de filtros das seções internas — mesma linguagem da barra principal. */
+.filtros-secao {
+  background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 14px 18px; display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 14px;
+}
+.filtros-secao .f { display: flex; flex-direction: column; gap: 5px; min-width: 150px; flex: 1; }
+.filtros-secao label {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted);
+}
+.filtros-secao select, .filtros-secao input {
+  padding: 8px 10px; border: 1.5px solid var(--line); border-radius: 9px; background: #fff; font-size: 13px;
+}
+.filtros-secao select:focus, .filtros-secao input:focus { outline: none; border-color: var(--orange); }
+
 .toolbar { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; align-items: center; }
 .toolbar input[type=text], .toolbar input[type=search] { padding: 8px 12px; border: 1.5px solid var(--line); border-radius: 9px; min-width: 220px; }
 
@@ -226,6 +240,27 @@ table.tbl tbody tr:hover { background: #fef4ec; }
 .hint { font-size: 12px; color: var(--muted); margin-top: 8px; line-height: 1.5; }
 .empty { text-align: center; color: var(--muted); padding: 30px 10px; font-size: 13px; }
 .pill-count { background: var(--orange); color: #fff; border-radius: 12px; font-size: 10.5px; padding: 2px 8px; font-weight: 700; margin-left: 6px; }
+
+/* Qualidade dos dados: lista de verificações à esquerda, detalhe à direita. */
+.qual-lista { display: flex; flex-direction: column; gap: 6px; }
+.qual-item {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  background: #fff; border: 1.5px solid var(--line); border-radius: 10px;
+  padding: 10px 14px; font-size: 13px; color: var(--text); transition: border-color .15s, background .15s;
+}
+.qual-item:hover { border-color: var(--orange); background: #fffaf5; }
+.qual-item.sel { border-color: var(--navy); background: #eef3f8; font-weight: 600; }
+.qual-item .qual-nome { flex: 1; }
+.qual-item .qual-num {
+  min-width: 40px; text-align: center; border-radius: 20px; padding: 2px 10px;
+  font-weight: 800; font-size: 12px;
+}
+.qual-item.zerado .qual-num { background: #e2f3e6; color: var(--green); }
+.qual-item.aviso  .qual-num { background: #fcf0da; color: #b17a17; }
+.qual-item.grave  .qual-num { background: #fde7e4; color: var(--red); }
+.qual-item.grave  { border-left: 4px solid var(--red); }
+.qual-item.aviso  { border-left: 4px solid var(--amber); }
+.qual-item.zerado { border-left: 4px solid var(--green); opacity: .8; }
 
 .qcard { border: 1.5px solid var(--line); border-radius: 12px; padding: 14px 16px; }
 .qcard h4 { font-size: 13px; color: var(--navy); margin-bottom: 4px; }

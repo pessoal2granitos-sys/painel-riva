@@ -138,6 +138,19 @@ CREATE TABLE IF NOT EXISTS team_members (
   employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
   PRIMARY KEY (user_id, employee_id)
 );
+-- Histórico de alterações. Cresce com o uso, por isso pode ser exportado em PDF
+-- e limpo pela tela de Lançamentos.
+CREATE TABLE IF NOT EXISTS activity_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  quando TEXT NOT NULL DEFAULT (datetime('now')),
+  usuario TEXT,
+  acao TEXT NOT NULL,
+  colaborador TEXT,
+  empresa TEXT,
+  treinamento TEXT,
+  detalhe TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_log_quando ON activity_log(quando DESC);
 -- Perfis de acesso: definem quais painéis e ações cada usuário enxerga.
 CREATE TABLE IF NOT EXISTS profiles (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

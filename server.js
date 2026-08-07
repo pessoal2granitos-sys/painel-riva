@@ -13,6 +13,7 @@ const { exportWorkbook } = require('./src/exporter');
 const { buildDataset, todayISO } = require('./src/dataset');
 const { cleanName, toISODate, shortCompanyName, trainingKey } = require('./src/normalize');
 const perms = require('./src/perms');
+const { gerarTabelaPDF } = require('./src/pdf');
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -400,8 +401,83 @@ app.put('/api/employees/:id', podeColaboradores, h(async (req, res) => {
   res.json({ ok: true });
 }));
 app.delete('/api/employees/:id', podeExcluir, h(async (req, res) => {
+  await registrar(req, 'Colaborador excluído', { employeeId: Number(req.params.id) });
   await db.run('DELETE FROM employees WHERE id = ?', Number(req.params.id));
   res.json({ ok: true });
+}));
+
+// ---- Histórico de alterações ----
+// Registra quem fez o quê. Falha aqui nunca derruba a operação principal.
+async function registrar(req, acao, { employeeId = null, trainingId = null, detalhe = null } = {}) {
+  try {
+    let colaborador = null, empresa = null, treinamento = null;
+    if (employeeId) {
+      const e = await db.get(`SELECT e.name, COALESCE(c.short_name, c.name) AS empresa
+        FROM employees e JOIN companies c ON c.id = e.company_id WHERE e.id = ?`, Number(employeeId));
+      if (e) { colaborador = e.name; empresa = e.empresa; }
+    }
+    if (trainingId) {
+      const t = await db.get('SELECT name FROM trainings WHERE id = ?', Number(trainingId));
+      if (t) treinamento = t.name;
+    }
+    await db.run(`INSERT INTO activity_log (usuario, acao, colaborador, empresa, treinamento, detalhe)
+      VALUES (?, ?, ?, ?, ?, ?)`,
+      req.user ? req.user.name : null, acao, colaborador, empresa, treinamento, detalhe);
+  } catch (e) {
+    console.warn('Falha ao registrar no histórico: ' + e.message);
+  }
+}
+
+app.get('/api/historico', requirePerm('lancamentos', 'usuarios'), h(async (req, res) => {
+  const limite = Math.min(Number(req.query.limite) || 500, 2000);
+  const linhas = await db.all(
+    'SELECT * FROM activity_log ORDER BY quando DESC, id DESC LIMIT ?', limite);
+  const { total } = await db.get('SELECT COUNT(*) total FROM activity_log');
+  res.json({ linhas, total });
+}));
+
+app.get('/api/historico/pdf', requirePerm('lancamentos', 'usuarios'), h(async (req, res) => {
+  const linhas = await db.all('SELECT * FROM activity_log ORDER BY quando DESC, id DESC LIMIT 5000');
+  const fmt = (utc) => {
+    if (!utc) return '';
+    const d = new Date(utc.replace(' ', 'T') + 'Z');
+    if (isNaN(d)) return utc;
+    const p = (n) => String(n).padStart(2, '0');
+    // Horário de Brasília (UTC-3)
+    const b = new Date(d.getTime() - 3 * 3600 * 1000);
+    return p(b.getUTCDate()) + '/' + p(b.getUTCMonth() + 1) + '/' + b.getUTCFullYear() +
+           ' ' + p(b.getUTCHours()) + ':' + p(b.getUTCMinutes());
+  };
+  const buf = gerarTabelaPDF({
+    titulo: 'Histórico de Lançamentos — Riva Stones',
+    subtitulo: 'Gerado em ' + fmt(new Date().toISOString().replace('T', ' ').slice(0, 19)) +
+      ' · ' + linhas.length + ' registro(s) · emitido por ' + (req.user ? req.user.name : ''),
+    colunas: [
+      { nome: 'Data/hora', largura: 11, campo: 'quando_br' },
+      { nome: 'Ação', largura: 16, campo: 'acao' },
+      { nome: 'Colaborador', largura: 21, campo: 'colaborador' },
+      { nome: 'Empresa', largura: 15, campo: 'empresa' },
+      { nome: 'Treinamento', largura: 20, campo: 'treinamento' },
+      { nome: 'Detalhe', largura: 20, campo: 'detalhe' },
+      { nome: 'Usuário', largura: 13, campo: 'usuario' },
+    ],
+    linhas: linhas.map(l => ({ ...l, quando_br: fmt(l.quando) })),
+  });
+  const nome = 'Historico de Lancamentos ' + todayISO().split('-').reverse().join('_') + '.pdf';
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', 'attachment; filename="' + nome + '"');
+  res.send(buf);
+}));
+
+app.delete('/api/historico', requirePerm('excluir'), h(async (req, res) => {
+  const antesDe = req.query.antes_de;   // 'AAAA-MM-DD' opcional
+  if (antesDe && /^\d{4}-\d{2}-\d{2}$/.test(antesDe)) {
+    const r = await db.run('DELETE FROM activity_log WHERE quando < ?', antesDe + ' 00:00:00');
+    return res.json({ ok: true, removidos: r.rowsAffected });
+  }
+  const { total } = await db.get('SELECT COUNT(*) total FROM activity_log');
+  await db.run('DELETE FROM activity_log');
+  res.json({ ok: true, removidos: total });
 }));
 
 // ---- Lançamentos de treinamento ----
@@ -432,15 +508,31 @@ app.post('/api/records', podeLancar, h(async (req, res) => {
   }
   const r = await db.run('INSERT INTO records (employee_id, training_id, realizacao, vencimento, obs) VALUES (?, ?, ?, ?, ?)',
     employeeId, trainingId, realizacao, vencimento, req.body.obs || null);
+  await registrar(req, 'Lançamento registrado', { employeeId, trainingId,
+    detalhe: 'realização ' + realizacao + (vencimento ? ' · vence em ' + vencimento : '') });
   res.json({ ok: true, id: r.lastInsertRowid, vencimento });
 }));
 app.put('/api/records/:id', podeLancar, h(async (req, res) => {
+  const antes = await db.get('SELECT * FROM records WHERE id = ?', Number(req.params.id));
   await db.run('UPDATE records SET realizacao = COALESCE(?, realizacao), vencimento = COALESCE(?, vencimento), obs = COALESCE(?, obs) WHERE id = ?',
     toISODate(req.body.realizacao), toISODate(req.body.vencimento), req.body.obs ?? null, Number(req.params.id));
+  if (antes) {
+    const depois = await db.get('SELECT * FROM records WHERE id = ?', Number(req.params.id));
+    const mudou = [];
+    if (antes.realizacao !== depois.realizacao) mudou.push('realização ' + antes.realizacao + ' → ' + depois.realizacao);
+    if (antes.vencimento !== depois.vencimento) mudou.push('vencimento ' + antes.vencimento + ' → ' + depois.vencimento);
+    await registrar(req, 'Lançamento alterado', { employeeId: antes.employee_id, trainingId: antes.training_id,
+      detalhe: mudou.join(' · ') || 'observação atualizada' });
+  }
   res.json({ ok: true });
 }));
 app.delete('/api/records/:id', podeLancar, h(async (req, res) => {
+  const antes = await db.get('SELECT * FROM records WHERE id = ?', Number(req.params.id));
   await db.run('DELETE FROM records WHERE id = ?', Number(req.params.id));
+  if (antes) {
+    await registrar(req, 'Lançamento excluído', { employeeId: antes.employee_id, trainingId: antes.training_id,
+      detalhe: 'realização ' + antes.realizacao });
+  }
   res.json({ ok: true });
 }));
 
@@ -563,6 +655,8 @@ app.post('/api/import', requirePerm('importar'), upload.single('file'), h(async 
   if (!req.file) return res.status(400).json({ error: 'Envie um arquivo .xlsx' });
   try {
     const stats = await importWorkbook(req.file.buffer, { clearRecords: req.body.clear === '1' });
+    await registrar(req, 'Planilha importada', { detalhe: stats.lancamentos + ' lançamentos novos · ' +
+      stats.colaboradores + ' colaboradores na planilha' + (req.body.clear === '1' ? ' · substituiu os lançamentos anteriores' : '') });
     res.json({ ok: true, stats });
   } catch (e) {
     res.status(400).json({ error: 'Falha na importação: ' + e.message });

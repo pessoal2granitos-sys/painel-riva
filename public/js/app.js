@@ -376,13 +376,32 @@ function renderVencimentos() {
   }));
   agenda.sort((a, b) => (a.dias ?? 99999) - (b.dias ?? 99999));
 
+  // Filtro próprio da agenda, além dos filtros gerais do topo.
   const renderAgendaBody = () => {
-    $('agendaBody').innerHTML = agenda.slice(0, 400).map(a => `<tr>
+    const busca = ($('agBusca') ? $('agBusca').value : '').trim().toLowerCase();
+    const prazo = $('agPrazo') ? $('agPrazo').value : '';
+    const lista = agenda.filter(a => {
+      if (busca) {
+        const alvo = (a.empName + ' ' + a.trName + ' ' + a.cargo + ' ' + a.company).toLowerCase();
+        if (!alvo.includes(busca)) return false;
+      }
+      if (prazo === 'vencidos' && a.dias >= 0) return false;
+      if (prazo === '30' && !(a.dias >= 0 && a.dias <= 30)) return false;
+      if (prazo === '60' && !(a.dias >= 0 && a.dias <= 60)) return false;
+      if (prazo === '90' && !(a.dias >= 0 && a.dias <= 90)) return false;
+      if (prazo === 'criticos' && a.dias > 30) return false;
+      return true;
+    });
+    if ($('agResumo')) {
+      $('agResumo').innerHTML = '<b>' + fmtN(lista.length) + '</b> de ' + fmtN(agenda.length) + ' registros' +
+        (lista.length > 400 ? ' · mostrando os 400 primeiros' : '');
+    }
+    $('agendaBody').innerHTML = lista.slice(0, 400).map(a => `<tr>
       <td>${esc(a.empName)}</td><td>${esc(a.company)}</td><td>${esc(a.cargo)}</td><td>${esc(a.trName)}</td>
       <td>${brDate(a.realizacao)}</td><td>${brDate(a.vencimento)}</td>
       <td style="text-align:center;font-weight:700;color:${a.dias < 0 ? 'var(--red)' : a.dias <= 60 ? 'var(--amber)' : 'var(--navy)'}">${a.dias}</td>
       <td><span class="badge ${STATUS_CLASS[a.status]}">${a.status}</span></td></tr>`).join('') ||
-      '<tr><td colspan="8" class="empty">Sem registros</td></tr>';
+      '<tr><td colspan="8" class="empty">Nenhum registro com esses filtros</td></tr>';
   };
 
   $('tab-vencimentos').innerHTML = `
@@ -406,6 +425,20 @@ function renderVencimentos() {
     </div>
     <div class="card">
       <h3>Agenda detalhada <small>do mais crítico ao mais distante · clique no cabeçalho para reordenar</small></h3>
+      <div class="filtros-secao" style="box-shadow:none;padding:0 0 14px;background:transparent">
+        <div class="f" style="flex:2"><label>Buscar na agenda</label>
+          <input type="search" id="agBusca" placeholder="colaborador, treinamento, função ou empresa"></div>
+        <div class="f"><label>Prazo</label><select id="agPrazo">
+          <option value="">Todos os prazos</option>
+          <option value="criticos">Críticos (vencidos + 30 dias)</option>
+          <option value="vencidos">Somente vencidos</option>
+          <option value="30">Vence em até 30 dias</option>
+          <option value="60">Vence em até 60 dias</option>
+          <option value="90">Vence em até 90 dias</option>
+        </select></div>
+        <button class="btn-ghost" id="agLimpar">Limpar</button>
+      </div>
+      <div class="hint" id="agResumo" style="margin-bottom:8px"></div>
       <div class="tbl-wrap" style="max-height:520px"><table class="tbl"><thead><tr>
         <th data-c="empName">Colaborador</th><th data-c="company">Empresa</th><th data-c="cargo">Função</th>
         <th data-c="trName">Treinamento</th><th data-c="realizacao">Realização</th><th data-c="vencimento">Vencimento</th>
@@ -413,7 +446,9 @@ function renderVencimentos() {
       </tr></thead><tbody id="agendaBody"></tbody></table></div>
     </div>`;
   renderAgendaBody();
-  document.querySelectorAll('#tab-vencimentos thead th').forEach(th => th.addEventListener('click', () =>
+  ['agBusca', 'agPrazo'].forEach(id => $(id).addEventListener('input', renderAgendaBody));
+  $('agLimpar').addEventListener('click', () => { $('agBusca').value = ''; $('agPrazo').value = ''; renderAgendaBody(); });
+  document.querySelectorAll('#tab-vencimentos thead th[data-c]').forEach(th => th.addEventListener('click', () =>
     sortTable('agenda', agenda, renderAgendaBody, agendaState, th.dataset.c,
       { dias: 'num', realizacao: 'num', vencimento: 'num' })));
 
@@ -569,37 +604,154 @@ function renderCusto() {
 }
 
 // ===== Qualidade dos Dados =====
-function renderQualidade() {
-  const emps = DS.employees.filter(e => !(e.demissao && e.demissao <= DS.today));
-  const trailCargos = new Set(DS.cargosWithTrail);
-  const semCargo = emps.filter(e => !e.cargo_id);
-  const semTrilha = emps.filter(e => e.cargo_id && !trailCargos.has(e.cargo_id));
-  const foraTrilha = ROWS.filter(r => !r.required && r.record_id);
-  const semVenc = ROWS.filter(r => r.record_id && r.realizacao && !r.vencimento);
-  const trSemMatriz = DS.trainings.filter(t => t.ch_formacao == null || t.validade_meses == null);
-  const semLanc = emps.filter(e => !ROWS.some(r => r.employee_id === e.id && r.record_id));
-  const semAdmissao = emps.filter(e => !e.admissao);
-  const desligados = DS.employees.filter(e => e.demissao && e.demissao <= DS.today);
+// Cada verificação vira uma lista navegável: o que está errado, em quem, e o
+// caminho para corrigir. Respeita os filtros do topo, como os demais painéis.
+let qualSelecionada = null;
 
-  const qc = (title, list, fmt, okMsg) => `
-    <div class="qcard">
-      <h4>${title}</h4>
-      <div class="qty ${list.length === 0 ? 'ok' : 'warn'}">${fmtN(list.length)}</div>
-      ${list.length ? `<ul>${list.slice(0, 40).map(fmt).join('')}</ul>${list.length > 40 ? '<div class="hint">… e mais ' + (list.length - 40) + '</div>' : ''}` : `<div class="hint">${okMsg}</div>`}
-    </div>`;
+function verificacoesQualidade() {
+  const dentroDoFiltro = (e) => {
+    const fe = $('fEmpresa').value, fc = $('fCargo').value, fb = $('fBusca').value.trim().toLowerCase();
+    if (fe && e.company_name !== fe) return false;
+    if (fc && (e.cargo_name || '') !== fc) return false;
+    if (fb && !e.name.toLowerCase().includes(fb)) return false;
+    return true;
+  };
+  const ativos = DS.employees.filter(e => !(e.demissao && e.demissao <= DS.today)).filter(dentroDoFiltro);
+  const trailCargos = new Set(DS.cargosWithTrail);
+  const linhas = fRows();
+
+  const pessoa = (e) => ({ titulo: e.name, sub: (e.cargo_name || 'sem cargo') + ' · ' + (e.company_short || e.company_name),
+                           acao: () => { irParaAdmin('colaboradores', e.name); } });
+  const lancamento = (r) => ({ titulo: r.empName, sub: r.trName + ' · ' + r.companyShort,
+                               acao: () => { irParaAdmin('lancamentos', r.empName); } });
+
+  return [
+    { id: 'semCargo', nome: 'Colaboradores sem cargo definido', grave: true,
+      porque: 'Sem cargo não há trilha, então os treinamentos obrigatórios dele não são cobrados.',
+      ok: 'Todos os colaboradores têm cargo.',
+      itens: ativos.filter(e => !e.cargo_id).map(pessoa) },
+
+    { id: 'semTrilha', nome: 'Cargos sem trilha de treinamentos', grave: true,
+      porque: 'A trilha define o que é obrigatório. Sem ela, os pendentes ficam subcontados.',
+      ok: 'Todos os cargos em uso têm trilha.',
+      itens: ativos.filter(e => e.cargo_id && !trailCargos.has(e.cargo_id)).map(pessoa) },
+
+    { id: 'semLanc', nome: 'Colaboradores sem nenhum lançamento', grave: false,
+      porque: 'Pode ser admissão recente ou treinamentos ainda não registrados no sistema.',
+      ok: 'Todos têm ao menos um lançamento.',
+      itens: ativos.filter(e => !linhas.some(r => r.employee_id === e.id && r.record_id)).map(pessoa) },
+
+    { id: 'semVenc', nome: 'Lançamentos sem data de vencimento', grave: true,
+      porque: 'Sem vencimento o sistema não consegue dizer se está válido ou vencido.',
+      ok: 'Todos os lançamentos têm vencimento.',
+      itens: linhas.filter(r => r.record_id && r.realizacao && !r.vencimento).map(lancamento) },
+
+    { id: 'foraTrilha', nome: 'Lançamentos fora da trilha do cargo', grave: false,
+      porque: 'Treinamento registrado que não consta na trilha — pode ser extra ou trilha incompleta.',
+      ok: 'Nenhum lançamento fora da trilha.',
+      itens: linhas.filter(r => !r.required && r.record_id).map(lancamento) },
+
+    { id: 'semAdmissao', nome: 'Colaboradores sem data de admissão', grave: false,
+      porque: 'A admissão ajuda a justificar prazos de treinamento admissional.',
+      ok: 'Todas as admissões preenchidas.',
+      itens: ativos.filter(e => !e.admissao).map(pessoa) },
+
+    { id: 'semMatriz', nome: 'Treinamentos sem carga horária ou validade', grave: true,
+      porque: 'Sem validade o vencimento não é calculado; sem carga horária as horas não somam.',
+      ok: 'Matriz completa para todos os treinamentos.',
+      itens: DS.trainings.filter(t => t.ch_formacao == null || t.validade_meses == null)
+        .map(t => ({ titulo: t.name,
+                     sub: (t.ch_formacao == null ? 'sem carga horária' : '') +
+                          (t.ch_formacao == null && t.validade_meses == null ? ' · ' : '') +
+                          (t.validade_meses == null ? 'sem validade' : ''),
+                     acao: () => irParaAdmin('treinamentos', t.name) })) },
+
+    { id: 'desligados', nome: 'Colaboradores desligados', grave: false, informativo: true,
+      porque: 'Ficam fora dos indicadores, mas o histórico é preservado.',
+      ok: 'Nenhum desligamento registrado.',
+      itens: DS.employees.filter(e => e.demissao && e.demissao <= DS.today).filter(dentroDoFiltro)
+        .map(e => ({ titulo: e.name, sub: 'desligado em ' + brDate(e.demissao),
+                     acao: () => irParaAdmin('colaboradores', e.name) })) },
+  ];
+}
+
+// Leva à seção de administração certa, já com a busca preenchida.
+window.irParaAdmin = (secao, busca) => {
+  if (!ADMIN_PERMS.some(pode)) return toast('Seu perfil não permite abrir os cadastros', true);
+  currentTab = 'admin'; cadTab = secao;
+  document.querySelectorAll('#mainTabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === 'admin'));
+  renderTab();
+  setTimeout(() => {
+    const campo = $('colabSearch') || $('lancSearch');
+    if (campo && busca) { campo.value = busca; campo.dispatchEvent(new Event('input')); campo.focus(); }
+  }, 120);
+};
+
+function renderQualidade() {
+  const checks = verificacoesQualidade();
+  const totalProblemas = checks.filter(c => !c.informativo).reduce((s, c) => s + c.itens.length, 0);
+  const graves = checks.filter(c => c.grave).reduce((s, c) => s + c.itens.length, 0);
+  const okCount = checks.filter(c => !c.informativo && c.itens.length === 0).length;
+  const verificaveis = checks.filter(c => !c.informativo).length;
+
+  if (!qualSelecionada || !checks.some(c => c.id === qualSelecionada)) {
+    const primeiro = checks.find(c => c.itens.length > 0);
+    qualSelecionada = primeiro ? primeiro.id : checks[0].id;
+  }
+  const sel = checks.find(c => c.id === qualSelecionada);
 
   $('tab-qualidade').innerHTML = `
-    <div class="grid cols-3">
-      ${qc('Colaboradores sem cargo definido', semCargo, e => `<li>${esc(e.name)} · ${esc(e.company_short || e.company_name)}</li>`, 'Todos os colaboradores têm cargo. ✔')}
-      ${qc('Cargos sem trilha de treinamentos', semTrilha, e => `<li>${esc(e.name)} · ${esc(e.cargo_name)} · ${esc(e.company_short || e.company_name)}</li>`, 'Todas as trilhas definidas. ✔')}
-      ${qc('Lançamentos fora da trilha do cargo', foraTrilha, r => `<li>${esc(r.empName)} · ${esc(r.trName)}</li>`, 'Nenhum lançamento fora da trilha. ✔')}
-      ${qc('Lançamentos sem data de vencimento', semVenc, r => `<li>${esc(r.empName)} · ${esc(r.trName)} (${brDate(r.realizacao)})</li>`, 'Todos os lançamentos têm vencimento. ✔')}
-      ${qc('Treinamentos sem matriz completa (CH/validade)', trSemMatriz, t => `<li>${esc(t.name)}</li>`, 'Matriz completa para todos. ✔')}
-      ${qc('Colaboradores sem nenhum lançamento', semLanc, e => `<li>${esc(e.name)} · ${esc(e.company_short || e.company_name)}</li>`, 'Todos têm ao menos 1 lançamento. ✔')}
-      ${qc('Colaboradores sem data de admissão', semAdmissao, e => `<li>${esc(e.name)} · ${esc(e.company_short || e.company_name)}</li>`, 'Todas as admissões preenchidas. ✔')}
-      ${qc('Colaboradores desligados (fora do painel)', desligados, e => `<li>${esc(e.name)} · ${brDate(e.demissao)}</li>`, 'Nenhum desligamento registrado.')}
+    <div class="kpis">
+      ${kpi('Pontos de atenção', fmtN(totalProblemas), 'itens a revisar no cadastro',
+            totalProblemas === 0 ? 'green' : graves > 0 ? 'red' : 'amber')}
+      ${kpi('Críticos', fmtN(graves), 'afetam o cálculo dos indicadores', graves ? 'red' : 'green')}
+      ${kpi('Verificações em ordem', okCount + ' de ' + verificaveis, 'sem nenhuma ocorrência', 'green')}
+      ${kpi('Colaboradores ativos', fmtN(DS.employees.filter(e => !(e.demissao && e.demissao <= DS.today)).length), 'na base do sistema')}
+    </div>
+    <div class="grid split-13">
+      <div class="card">
+        <h3>Verificações <small>clique para ver os itens</small></h3>
+        <div class="qual-lista">
+          ${checks.map(c => `
+            <button class="qual-item ${c.id === qualSelecionada ? 'sel' : ''} ${c.itens.length === 0 ? 'zerado' : (c.grave ? 'grave' : 'aviso')}"
+                    onclick="selecionarQualidade('${c.id}')">
+              <span class="qual-nome">${esc(c.nome)}</span>
+              <span class="qual-num">${c.itens.length === 0 ? '✔' : fmtN(c.itens.length)}</span>
+            </button>`).join('')}
+        </div>
+      </div>
+      <div class="card">
+        <h3>${esc(sel.nome)}
+          <small>${sel.itens.length ? fmtN(sel.itens.length) + ' item(ns)' : 'nada a corrigir'}</small></h3>
+        <p class="hint" style="margin:-6px 0 12px">${esc(sel.porque)}</p>
+        ${sel.itens.length ? `
+          <input type="search" id="qualBusca" placeholder="filtrar nesta lista…"
+                 style="width:100%;padding:8px 11px;border:1.5px solid var(--line);border-radius:9px;margin-bottom:10px">
+          <div class="tbl-wrap" style="max-height:420px"><table class="tbl"><tbody id="qualBody"></tbody></table></div>`
+        : `<div class="empty" style="color:var(--green);font-weight:600">✔ ${esc(sel.ok)}</div>`}
+      </div>
     </div>`;
+
+  if (sel.itens.length) {
+    const pintar = () => {
+      const q = $('qualBusca').value.trim().toLowerCase();
+      const lista = sel.itens.filter(i => !q || (i.titulo + ' ' + i.sub).toLowerCase().includes(q));
+      $('qualBody').innerHTML = lista.slice(0, 300).map((i, idx) => `<tr>
+        <td><b>${esc(i.titulo)}</b><div class="hint">${esc(i.sub)}</div></td>
+        <td style="width:110px;text-align:right">
+          <button class="btn-mini" onclick="corrigirQualidade('${sel.id}',${sel.itens.indexOf(i)})">Corrigir</button>
+        </td></tr>`).join('') || '<tr><td class="empty">Nada encontrado</td></tr>';
+    };
+    $('qualBusca').addEventListener('input', pintar);
+    pintar();
+  }
 }
+
+window.selecionarQualidade = (id) => { qualSelecionada = id; renderQualidade(); };
+window.corrigirQualidade = (checkId, idx) => {
+  const c = verificacoesQualidade().find(x => x.id === checkId);
+  if (c && c.itens[idx]) c.itens[idx].acao();
+};
 
 // ===== Cadastros =====
 // Painel de administração: reúne num só lugar tudo que configura o sistema.
@@ -791,8 +943,30 @@ function empPendCounts() {
 
 function renderCadColab() {
   const counts = empPendCounts();
-  const render = (filter) => {
-    const list = DS.employees.filter(e => !filter || e.name.toLowerCase().includes(filter));
+  const cargos = [...new Set(DS.employees.map(e => e.cargo_name).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+
+  const render = () => {
+    const busca = $('colabSearch').value.trim().toLowerCase();
+    const emp = $('colabEmpresa').value;
+    const cargo = $('colabCargo').value;
+    const situacao = $('colabSituacao').value;
+    const pendencia = $('colabPendencia').value;
+
+    const list = DS.employees.filter(e => {
+      if (busca && !e.name.toLowerCase().includes(busca)) return false;
+      if (emp && String(e.company_id) !== emp) return false;
+      if (cargo && (e.cargo_name || '') !== cargo) return false;
+      const desligado = !!(e.demissao && e.demissao <= DS.today);
+      if (situacao === 'ativos' && desligado) return false;
+      if (situacao === 'desligados' && !desligado) return false;
+      const c = counts[e.id] || { p: 0, v: 0 };
+      if (pendencia === 'com' && c.p + c.v === 0) return false;
+      if (pendencia === 'sem' && c.p + c.v > 0) return false;
+      if (pendencia === 'vencidos' && c.v === 0) return false;
+      return true;
+    });
+
+    $('colabResumo').innerHTML = '<b>' + fmtN(list.length) + '</b> de ' + fmtN(DS.employees.length) + ' colaboradores';
     $('colabBody').innerHTML = list.map(e => {
       const c = counts[e.id] || { p: 0, v: 0 };
       const desligado = e.demissao && e.demissao <= DS.today;
@@ -800,25 +974,52 @@ function renderCadColab() {
         <td>${esc(e.name)}</td><td>${esc(e.company_short || e.company_name)}</td><td>${esc(e.cargo_name || '—')}</td>
         <td>${brDate(e.admissao)}</td><td>${e.demissao ? brDate(e.demissao) : '—'}</td>
         <td>${desligado ? '<span class="badge vencido">DESLIGADO</span>' : '<span class="badge valido">ATIVO</span>'}</td>
-        <td style="text-align:center">${c.p}</td><td style="text-align:center">${c.v}</td>
+        <td style="text-align:center;${c.p ? 'color:var(--amber);font-weight:700' : ''}">${c.p}</td>
+        <td style="text-align:center;${c.v ? 'color:var(--red);font-weight:700' : ''}">${c.v}</td>
         <td style="white-space:nowrap">
           <button class="btn-mini" onclick="editEmployee(${e.id})">Editar</button>
           <button class="btn-mini" onclick="openLancamentos(${e.id})">Lançamentos</button>
           ${pode('excluir') ? `<button class="btn-mini danger" onclick="delEmployee(${e.id})">Excluir</button>` : ''}
         </td></tr>`;
-    }).join('') || '<tr><td colspan="9" class="empty">Nenhum colaborador</td></tr>';
+    }).join('') || '<tr><td colspan="9" class="empty">Nenhum colaborador com esses filtros</td></tr>';
   };
+
   $('cadContent').innerHTML = `
+    <div class="filtros-secao">
+      <div class="f"><label>Buscar por nome</label><input type="search" id="colabSearch" placeholder="digite parte do nome"></div>
+      <div class="f"><label>Empresa</label><select id="colabEmpresa"><option value="">Todas</option>
+        ${DS.companies.map(c => `<option value="${c.id}">${esc(c.short_name || c.name)}</option>`).join('')}</select></div>
+      <div class="f"><label>Cargo</label><select id="colabCargo"><option value="">Todos</option>
+        ${cargos.map(c => `<option>${esc(c)}</option>`).join('')}</select></div>
+      <div class="f"><label>Situação</label><select id="colabSituacao">
+        <option value="ativos">Somente ativos</option>
+        <option value="">Todos</option>
+        <option value="desligados">Somente desligados</option></select></div>
+      <div class="f"><label>Pendências</label><select id="colabPendencia">
+        <option value="">Todos</option>
+        <option value="com">Com pendência</option>
+        <option value="vencidos">Com vencidos</option>
+        <option value="sem">Totalmente em dia</option></select></div>
+      <button class="btn-ghost" id="colabLimpar">Limpar</button>
+    </div>
     <div class="toolbar">
-      <input type="search" id="colabSearch" placeholder="Buscar colaborador…">
+      <span class="hint" id="colabResumo"></span>
+      <div style="flex:1"></div>
       <button class="btn-primary" onclick="editEmployee(null)">+ Novo colaborador</button>
     </div>
     <div class="card"><div class="tbl-wrap" style="max-height:600px"><table class="tbl"><thead><tr>
       <th>Nome</th><th>Empresa</th><th>Cargo</th><th>Admissão</th><th>Demissão</th><th>Status</th>
-      <th>Pend.</th><th>Venc.</th><th>Ações</th>
+      <th style="text-align:center">Pend.</th><th style="text-align:center">Venc.</th><th>Ações</th>
     </tr></thead><tbody id="colabBody"></tbody></table></div></div>`;
-  render('');
-  $('colabSearch').addEventListener('input', (e) => render(e.target.value.trim().toLowerCase()));
+
+  ['colabSearch', 'colabEmpresa', 'colabCargo', 'colabSituacao', 'colabPendencia']
+    .forEach(id => $(id).addEventListener('input', render));
+  $('colabLimpar').addEventListener('click', () => {
+    $('colabSearch').value = ''; $('colabEmpresa').value = ''; $('colabCargo').value = '';
+    $('colabSituacao').value = 'ativos'; $('colabPendencia').value = '';
+    render();
+  });
+  render();
 }
 
 window.editEmployee = (id) => {
@@ -1028,8 +1229,21 @@ window.delTraining = async (id) => {
 };
 
 // --- Lançamentos ---
+let lancAba = 'registrar';
 function renderCadLancamentos() {
   $('cadContent').innerHTML = `
+    <div class="subtabs" style="margin-bottom:14px">
+      <button id="abaRegistrar" class="${lancAba === 'registrar' ? 'active' : ''}">Registrar</button>
+      <button id="abaHistorico" class="${lancAba === 'historico' ? 'active' : ''}">Histórico de alterações</button>
+    </div>
+    <div id="lancConteudo"></div>`;
+  $('abaRegistrar').addEventListener('click', () => { lancAba = 'registrar'; renderCadLancamentos(); });
+  $('abaHistorico').addEventListener('click', () => { lancAba = 'historico'; renderCadLancamentos(); });
+  if (lancAba === 'historico') renderHistorico(); else renderRegistrar();
+}
+
+function renderRegistrar() {
+  $('lancConteudo').innerHTML = `
     <div class="toolbar">
       <input type="search" id="lancSearch" placeholder="Digite o nome do colaborador…" style="min-width:300px">
       <button class="btn-primary" onclick="newRecordQuick()">+ Novo lançamento</button>
@@ -1047,6 +1261,102 @@ function renderCadLancamentos() {
       </div>`).join('') || '<div class="empty">Nenhum colaborador encontrado</div>';
   });
   $('lancResults').innerHTML = '<div class="empty">Digite o nome de um colaborador para gerenciar os lançamentos dele</div>';
+}
+
+// Histórico de tudo que alterou os números: quem fez, quando e o quê.
+let HISTORICO = [];
+async function renderHistorico() {
+  $('lancConteudo').innerHTML = '<div class="empty">Carregando histórico…</div>';
+  const dados = await api('/api/historico?limite=2000');
+  HISTORICO = dados.linhas;
+
+  const acoes = [...new Set(HISTORICO.map(l => l.acao))].sort();
+  const render = () => {
+    const busca = $('hSearch').value.trim().toLowerCase();
+    const acao = $('hAcao').value;
+    const de = $('hDe').value, ate = $('hAte').value;
+    const lista = HISTORICO.filter(l => {
+      if (acao && l.acao !== acao) return false;
+      const dia = (l.quando || '').slice(0, 10);
+      if (de && dia < de) return false;
+      if (ate && dia > ate) return false;
+      if (busca) {
+        const alvo = [l.colaborador, l.treinamento, l.empresa, l.usuario, l.detalhe].join(' ').toLowerCase();
+        if (!alvo.includes(busca)) return false;
+      }
+      return true;
+    });
+    $('hResumo').innerHTML = '<b>' + fmtN(lista.length) + '</b> de ' + fmtN(dados.total) + ' registros';
+    $('hBody').innerHTML = lista.slice(0, 800).map(l => `<tr>
+      <td style="white-space:nowrap">${esc(dataHoraLocal(l.quando) || '')}</td>
+      <td>${esc(l.acao)}</td>
+      <td>${esc(l.colaborador || '—')}</td>
+      <td>${esc(l.empresa || '—')}</td>
+      <td>${esc(l.treinamento || '—')}</td>
+      <td class="hint" style="font-size:12px">${esc(l.detalhe || '')}</td>
+      <td>${esc(l.usuario || '—')}</td></tr>`).join('') ||
+      '<tr><td colspan="7" class="empty">Nenhum registro com esses filtros</td></tr>';
+  };
+
+  $('lancConteudo').innerHTML = `
+    <div class="filtros-secao">
+      <div class="f"><label>Buscar</label><input type="search" id="hSearch" placeholder="colaborador, treinamento, usuário"></div>
+      <div class="f"><label>Ação</label><select id="hAcao"><option value="">Todas</option>
+        ${acoes.map(a => `<option>${esc(a)}</option>`).join('')}</select></div>
+      <div class="f"><label>De</label><input type="date" id="hDe"></div>
+      <div class="f"><label>Até</label><input type="date" id="hAte"></div>
+      <button class="btn-ghost" id="hLimpar">Limpar</button>
+    </div>
+    <div class="toolbar">
+      <span class="hint" id="hResumo"></span>
+      <div style="flex:1"></div>
+      <a class="btn-navy" style="text-decoration:none" href="/api/historico/pdf">⬇ Baixar PDF</a>
+      ${pode('excluir') ? '<button class="btn-ghost" id="hLimparAntigos">Limpar anteriores a…</button>' +
+                          '<button class="btn-ghost" id="hApagarTudo" style="color:var(--red);border-color:var(--red)">Apagar todo o histórico</button>' : ''}
+    </div>
+    <div class="card">
+      <div class="tbl-wrap" style="max-height:520px"><table class="tbl"><thead><tr>
+        <th>Data e hora</th><th>Ação</th><th>Colaborador</th><th>Empresa</th>
+        <th>Treinamento</th><th>Detalhe</th><th>Usuário</th>
+      </tr></thead><tbody id="hBody"></tbody></table></div>
+      <p class="hint" style="margin-top:12px">
+        O histórico guarda cada lançamento, alteração, exclusão e importação, com autor e horário.
+        Ele cresce com o uso — baixe o PDF antes de limpar, se quiser manter o registro.
+        A tela mostra até 800 linhas; o PDF sai completo.
+      </p>
+    </div>`;
+
+  ['hSearch', 'hAcao', 'hDe', 'hAte'].forEach(id => $(id).addEventListener('input', render));
+  $('hLimpar').addEventListener('click', () => {
+    $('hSearch').value = ''; $('hAcao').value = ''; $('hDe').value = ''; $('hAte').value = '';
+    render();
+  });
+  if ($('hApagarTudo')) {
+    $('hApagarTudo').addEventListener('click', async () => {
+      if (!await confirmar('Apagar TODO o histórico de alterações?\n\nOs lançamentos em si não são afetados — some apenas o registro de quem fez o quê. Baixe o PDF antes, se quiser guardar.', 'Apagar histórico')) return;
+      const r = await api('/api/historico', { method: 'DELETE' });
+      toast(fmtN(r.removidos) + ' registros apagados');
+      renderHistorico();
+    });
+  }
+  if ($('hLimparAntigos')) {
+    $('hLimparAntigos').addEventListener('click', () => {
+      const corte = new Date(); corte.setMonth(corte.getMonth() - 6);
+      const iso = corte.toISOString().slice(0, 10);
+      openModal('Limpar histórico antigo', `
+        <p class="hint">Apaga os registros anteriores à data escolhida. Os lançamentos não são afetados.</p>
+        <label>Apagar registros anteriores a</label>
+        <input type="date" id="mCorte" value="${iso}">`,
+        [{ label: 'Apagar', cls: 'btn-primary', onClick: async () => {
+          const d = $('mCorte').value;
+          if (!d) return toast('Escolha uma data', true);
+          const r = await api('/api/historico?antes_de=' + d, { method: 'DELETE' });
+          closeModal(); toast(fmtN(r.removidos) + ' registros apagados');
+          renderHistorico();
+        } }]);
+    });
+  }
+  render();
 }
 
 window.newRecordQuick = () => openRecordModal(null, null);
