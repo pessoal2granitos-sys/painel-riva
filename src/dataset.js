@@ -16,7 +16,7 @@ function daysBetween(fromISO, toISO) {
 async function buildDataset(scopeEmployeeIds = null) {
   const today = todayISO();
 
-  const [companies, cargos, trainings, allEmployees, trails, reqRows, allRecords] = await Promise.all([
+  const [companies, cargos, trainings, allEmployees, trails, reqRows, allRecords, ultimo] = await Promise.all([
     db.all('SELECT * FROM companies WHERE active = 1 ORDER BY sort_order, name'),
     db.all('SELECT * FROM cargos ORDER BY name'),
     db.all('SELECT * FROM trainings WHERE active = 1 ORDER BY name'),
@@ -28,6 +28,8 @@ async function buildDataset(scopeEmployeeIds = null) {
     db.all('SELECT cargo_id, training_id FROM trails'),
     db.all('SELECT employee_id, training_id FROM requirements'),
     db.all('SELECT * FROM records ORDER BY realizacao'),
+    // Quando o último lançamento foi registrado (created_at vem em UTC).
+    db.get('SELECT MAX(created_at) AS quando FROM records'),
   ]);
 
   let employees = allEmployees;
@@ -124,7 +126,11 @@ async function buildDataset(scopeEmployeeIds = null) {
   }
 
   const cargosWithTrail = cargos.filter(c => (trailMap.get(c.id) || new Set()).size > 0).map(c => c.id);
-  return { today, companies, cargos, trainings, employees, grid, trails, cargosWithTrail };
+  return {
+    today, companies, cargos, trainings, employees, grid, trails, cargosWithTrail,
+    ultimoLancamento: (ultimo && ultimo.quando) || null,  // UTC, formatado na tela
+    geradoEm: new Date().toISOString(),
+  };
 }
 
 module.exports = { buildDataset, todayISO };

@@ -115,6 +115,16 @@ main { max-width: 1440px; margin: 0 auto; padding: 22px 28px 60px; }
 }
 .filters select:focus, .filters input:focus { outline: none; border-color: var(--orange); }
 
+/* Aviso de dados desatualizados: aparece quando outra pessoa (ou outra aba)
+   lançou algo depois que esta tela foi carregada. */
+.stale-bar {
+  background: #fdf3e3; border: 1.5px solid var(--amber); border-radius: 10px;
+  padding: 10px 16px; margin-bottom: 18px; display: flex; align-items: center; gap: 12px;
+  font-size: 13px; color: #8a5d0f; font-weight: 600;
+}
+#btnAtualizar.girando { pointer-events: none; opacity: .75; }
+#btnAtualizar.girando::before { content: ''; }
+
 .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 20px; }
 .kpi {
   background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px 18px;

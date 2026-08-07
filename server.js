@@ -31,6 +31,13 @@ app.use((req, res, next) => {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'same-origin');
   if (BEHIND_PROXY) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  // Indicadores nunca podem vir de cache: um lançamento tem que aparecer na
+  // consulta seguinte, mesmo com CDN na frente.
+  if (req.path.startsWith('/api/')) {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.setHeader('CDN-Cache-Control', 'no-store');
+    res.setHeader('Vercel-CDN-Cache-Control', 'no-store');
+  }
   next();
 });
 
@@ -203,6 +210,20 @@ app.get('/api/dataset', requireAuth, h(async (req, res) => {
     perms: req.user.perms, scope: req.user.scope,
   };
   res.json(ds);
+}));
+
+// Marcador leve de "mudou alguma coisa?", para a tela conferir de tempos em tempos
+// sem precisar baixar o painel inteiro.
+app.get('/api/status', requireAuth, h(async (req, res) => {
+  const r = await db.get(`SELECT
+      (SELECT MAX(created_at) FROM records) AS ultimo,
+      (SELECT COUNT(*) FROM records) AS lancamentos,
+      (SELECT COUNT(*) FROM employees WHERE active = 1) AS colaboradores,
+      (SELECT COUNT(*) FROM requirements) AS exigencias`);
+  res.json({
+    ultimoLancamento: r.ultimo || null,
+    assinatura: [r.ultimo || '', r.lancamentos, r.colaboradores, r.exigencias].join('|'),
+  });
 }));
 
 // ---- Perfis de acesso ----

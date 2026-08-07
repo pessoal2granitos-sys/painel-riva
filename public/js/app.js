@@ -71,6 +71,12 @@ async function loadAll() {
   renderHeader();
   fillFilters();
   renderTab();
+  // Registra o estado recém-carregado como referência para a próxima verificação.
+  try {
+    const st = await (await fetch('/api/status')).json();
+    assinaturaAtual = st.assinatura;
+    $('avisoDesatualizado').style.display = 'none';
+  } catch { /* sem problema: a próxima verificação recalibra */ }
 }
 
 // Atalho para consultar permissão do usuário logado.
@@ -78,9 +84,22 @@ const pode = (chave) => !!(ME && ME.perms && ME.perms[chave]);
 // Permissões que dão acesso ao painel de administração.
 const ADMIN_PERMS = ['colaboradores', 'config', 'lancamentos', 'usuarios', 'perfis', 'importar'];
 
+// created_at vem em UTC ("2026-08-07 12:34:56"); mostra no horário local.
+function dataHoraLocal(utc) {
+  if (!utc) return null;
+  const d = new Date(utc.replace(' ', 'T') + 'Z');
+  if (isNaN(d)) return null;
+  const p = (n) => String(n).padStart(2, '0');
+  return p(d.getDate()) + '/' + p(d.getMonth() + 1) + '/' + d.getFullYear() +
+         ' às ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
 function renderHeader() {
   const comps = DS.companies.map(c => c.short_name || c.name).join(' · ');
-  $('headerSub').innerHTML = esc(comps) + ' &nbsp;|&nbsp; Posição em <b>' + brDate(DS.today) + '</b>';
+  const ultimo = dataHoraLocal(DS.ultimoLancamento);
+  $('headerSub').innerHTML = esc(comps) +
+    ' &nbsp;|&nbsp; Posição em <b>' + brDate(DS.today) + '</b>' +
+    (ultimo ? ' &nbsp;|&nbsp; Último lançamento: <b>' + esc(ultimo) + '</b>' : '');
   $('userName').textContent = ME.name;
   $('userRole').textContent = ME.profile || ROLE_LABEL[ME.role] || ME.role;
   $('userAvatar').textContent = ME.name.trim().split(/\s+/).map(p => p[0]).slice(0, 2).join('').toUpperCase();
@@ -1299,6 +1318,51 @@ $('btnLimpar').addEventListener('click', () => {
   $('fBusca').value = '';
   renderTab();
 });
+// ---------- manter os indicadores sempre atuais ----------
+// Um lançamento feito aqui já recarrega tudo. Estes mecanismos cobrem o resto:
+// outra pessoa lançando ao mesmo tempo, outra aba do navegador, ou a página
+// deixada aberta por horas.
+async function atualizarAgora(botao) {
+  if (botao) { botao.classList.add('girando'); botao.textContent = '⟳ Atualizando…'; }
+  try {
+    await loadAll();
+    $('avisoDesatualizado').style.display = 'none';
+    toast('Indicadores atualizados');
+  } finally {
+    if (botao) { botao.classList.remove('girando'); botao.textContent = '⟳ Atualizar'; }
+  }
+}
+$('btnAtualizar').addEventListener('click', () => atualizarAgora($('btnAtualizar')));
+$('btnAtualizarAviso').addEventListener('click', () => atualizarAgora($('btnAtualizar')));
+
+// Assinatura do estado dos dados no momento em que a tela foi carregada.
+let assinaturaAtual = null;
+
+// Pergunta ao servidor se algo mudou. A consulta é leve (só contadores), então
+// pode rodar de tempos em tempos sem pesar.
+async function verificarNovidades({ silencioso = true } = {}) {
+  if (!DS) return;
+  try {
+    const res = await fetch('/api/status', { headers: { 'Cache-Control': 'no-cache' } });
+    if (!res.ok) return;
+    const st = await res.json();
+    if (assinaturaAtual === null) { assinaturaAtual = st.assinatura; return; }
+    if (st.assinatura === assinaturaAtual) return;
+
+    // Não recarrega por baixo de uma edição em andamento: avisa e espera.
+    const editando = $('modalBack').classList.contains('open') || $('confirmBack').classList.contains('open');
+    if (editando) { $('avisoDesatualizado').style.display = 'flex'; return; }
+    await loadAll();
+    $('avisoDesatualizado').style.display = 'none';
+    if (!silencioso) toast('Indicadores atualizados');
+  } catch { /* rede instável: tenta de novo no próximo ciclo */ }
+}
+
+// Ao voltar para a aba do navegador e a cada 2 minutos com a aba visível.
+document.addEventListener('visibilitychange', () => { if (!document.hidden) verificarNovidades(); });
+window.addEventListener('focus', () => verificarNovidades());
+setInterval(() => { if (!document.hidden) verificarNovidades(); }, 120000);
+
 $('btnLogout').addEventListener('click', async () => { await api('/api/logout', { method: 'POST' }); location.href = '/login'; });
 $('btnMyPassword').addEventListener('click', () => {
   openModal('Trocar minha senha', `
