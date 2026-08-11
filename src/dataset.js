@@ -87,9 +87,15 @@ async function buildDataset(scopeEmployeeIds = null) {
   for (const e of employees) {
     const dismissed = e.demissao && e.demissao <= today;
     if (dismissed) continue;
-    // Exigido = trilha do cargo + exigências individuais vindas da planilha
-    const required = new Set(e.cargo_id ? (trailMap.get(e.cargo_id) || []) : []);
-    for (const tid of (reqMap.get(e.id) || [])) required.add(tid);
+    // Três origens distintas, para os indicadores poderem contar só o que é
+    // realmente obrigatório pelo cargo:
+    //   trilha     — exigido pela trilha do cargo
+    //   individual — cobrado só desta pessoa (veio de uma linha da planilha)
+    //   avulso     — treinamento lançado sem ser exigido por nenhum dos dois
+    const naTrilha = new Set(e.cargo_id ? (trailMap.get(e.cargo_id) || []) : []);
+    const individuais = reqMap.get(e.id) || new Set();
+    const required = new Set(naTrilha);
+    for (const tid of individuais) required.add(tid);
     const pairs = new Set(required);
     for (const key of latest.keys()) {
       const [empId, tid] = key.split('|').map(Number);
@@ -120,6 +126,7 @@ async function buildDataset(scopeEmployeeIds = null) {
         vencimento: rec ? rec.vencimento : null,
         status, dias, horas, custo,
         required: required.has(tid),
+        origem: naTrilha.has(tid) ? 'trilha' : (individuais.has(tid) ? 'individual' : 'avulso'),
         history: recCount.get(e.id + '|' + tid) || 0,
       });
     }

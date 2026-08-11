@@ -132,8 +132,27 @@ function fillFilters() {
   $('fEmpresa').value = keep.e; $('fCargo').value = keep.c; $('fTreinamento').value = keep.t;
 }
 
+// ---------- escopo dos indicadores ----------
+// Por padrão os números contam apenas o que a trilha do cargo exige. Exigências
+// individuais e treinamentos avulsos existem no cadastro, mas só entram na conta
+// se a pessoa escolher — do contrário inflam os pendentes obrigatórios.
+let ESCOPO = localStorage.getItem('painelEscopo') || 'trilha';
+const ESCOPO_LABEL = {
+  trilha: 'somente a trilha do cargo',
+  individual: 'trilha + exigências individuais',
+  tudo: 'tudo, inclusive avulsos',
+};
+function noEscopo(r) {
+  if (ESCOPO === 'tudo') return true;
+  if (ESCOPO === 'individual') return r.origem !== 'avulso';
+  return r.origem === 'trilha';
+}
+// Base de todos os indicadores, já sem o que está fora do escopo escolhido.
+const rowsEscopo = () => ROWS.filter(noEscopo);
+
 // ---------- filtros ----------
 function rowMatches(r) {
+  if (!noEscopo(r)) return false;
   const fe = $('fEmpresa').value, fc = $('fCargo').value, ft = $('fTreinamento').value,
         fs = $('fSituacao').value, ff = $('fFaixa').value, fb = $('fBusca').value.trim().toLowerCase();
   if (fe && r.company !== fe) return false;
@@ -210,9 +229,25 @@ function sortTable(tableId, rows, renderFn, state, col, types) {
 }
 
 // ---------- abas ----------
+// Mostra quantos itens ficaram de fora da conta, para o número nunca surpreender.
+function renderAvisoEscopo(visivel) {
+  const barra = $('avisoEscopo');
+  const esconder = () => { barra.style.display = 'none'; barra.innerHTML = ''; };
+  if (!visivel) { esconder(); return; }
+  const fora = ROWS.filter(r => !noEscopo(r));
+  if (!fora.length) { esconder(); return; }
+  const pend = fora.filter(r => r.status === 'PENDENTE').length;
+  barra.style.display = 'flex';
+  barra.innerHTML =
+    'Contando <b>' + ESCOPO_LABEL[ESCOPO] + '</b>. Fora da conta: <b>' + fmtN(fora.length) + '</b> registro(s)' +
+    (pend ? ', sendo <b>' + fmtN(pend) + '</b> pendente(s)' : '') + '.' +
+    (pode('config') ? ' <button class="btn-mini" onclick="verForaDaTrilha()">Ver quais são</button>' : '');
+}
+
 function renderTab() {
   const dash = ['visao', 'vencimentos', 'cargos', 'custo', 'qualidade'].includes(currentTab);
   $('filterBar').style.display = dash ? '' : 'none';
+  renderAvisoEscopo(dash);
   document.querySelectorAll('main > section').forEach(s => s.style.display = 'none');
   const alvo = $('tab-' + currentTab);
   if (!alvo) return;
@@ -646,10 +681,21 @@ function verificacoesQualidade() {
       ok: 'Todos os lançamentos têm vencimento.',
       itens: linhas.filter(r => r.record_id && r.realizacao && !r.vencimento).map(lancamento) },
 
-    { id: 'foraTrilha', nome: 'Lançamentos fora da trilha do cargo', grave: false,
-      porque: 'Treinamento registrado que não consta na trilha — pode ser extra ou trilha incompleta.',
-      ok: 'Nenhum lançamento fora da trilha.',
-      itens: linhas.filter(r => !r.required && r.record_id).map(lancamento) },
+    { id: 'foraTrilha', nome: 'Exigências fora da trilha do cargo', grave: false,
+      porque: 'Cobrado da pessoa mas ausente da trilha do cargo. Não entra nos indicadores no ' +
+              'escopo padrão — inclua o treinamento na trilha se ele for mesmo obrigatório.',
+      ok: 'Tudo o que é cobrado consta na trilha do cargo.',
+      itens: ROWS.filter(r => r.origem !== 'trilha')
+        .filter(r => {
+          const fe = $('fEmpresa').value, fc = $('fCargo').value, fb = $('fBusca').value.trim().toLowerCase();
+          if (fe && r.company !== fe) return false;
+          if (fc && r.cargo !== fc) return false;
+          if (fb && !r.empName.toLowerCase().includes(fb)) return false;
+          return true;
+        })
+        .map(r => ({ titulo: r.empName,
+                     sub: r.trName + ' · ' + r.cargo + ' · ' + (r.origem === 'individual' ? 'exigência individual' : 'lançamento avulso') + ' · ' + r.status,
+                     acao: () => irParaAdmin('cargostrilhas', r.cargo) })) },
 
     { id: 'semAdmissao', nome: 'Colaboradores sem data de admissão', grave: false,
       porque: 'A admissão ajuda a justificar prazos de treinamento admissional.',
@@ -794,7 +840,8 @@ function renderAdminResumo() {
   const emps = DS.employees.filter(e => !(e.demissao && e.demissao <= DS.today));
   const trailCargos = new Set(DS.cargosWithTrail);
   const semTrilha = emps.filter(e => !e.cargo_id || !trailCargos.has(e.cargo_id)).length;
-  const validos = ROWS.filter(r => r.status === 'VÁLIDO').length;
+  const base = rowsEscopo();
+  const validos = base.filter(r => r.status === 'VÁLIDO').length;
   const atalho = (id, texto) => `<button class="btn-mini" onclick="irParaSecao('${id}')">${texto}</button>`;
 
   $('cadContent').innerHTML = `
@@ -803,8 +850,8 @@ function renderAdminResumo() {
       ${kpi('Empresas', fmtN(DS.companies.length), 'cadastradas')}
       ${kpi('Cargos', fmtN(DS.cargos.length), fmtN(trailCargos.size) + ' com trilha definida')}
       ${kpi('Treinamentos', fmtN(DS.trainings.length), 'na matriz')}
-      ${kpi('Aderência geral', fmtPct(pct(validos, ROWS.length)), fmtN(validos) + ' de ' + fmtN(ROWS.length),
-            pct(validos, ROWS.length) >= 95 ? 'green' : pct(validos, ROWS.length) >= 75 ? 'amber' : 'red')}
+      ${kpi('Aderência geral', fmtPct(pct(validos, base.length)), fmtN(validos) + ' de ' + fmtN(base.length),
+            pct(validos, base.length) >= 95 ? 'green' : pct(validos, base.length) >= 75 ? 'amber' : 'red')}
       ${kpi('Sem trilha', fmtN(semTrilha), 'colaboradores a revisar', semTrilha ? 'amber' : 'green')}
     </div>
     <div class="grid cols-2">
@@ -933,7 +980,7 @@ window.excluirPerfil = async (id) => {
 
 function empPendCounts() {
   const m = {};
-  for (const r of ROWS) {
+  for (const r of rowsEscopo()) {
     m[r.employee_id] = m[r.employee_id] || { p: 0, v: 0 };
     if (r.status === 'PENDENTE') m[r.employee_id].p++;
     if (r.status === 'VENCIDO') m[r.employee_id].v++;
@@ -1372,9 +1419,10 @@ window.openLancamentos = async (empId) => {
 
   const situacao = mine.map(g => {
     const hist = recsByTraining[g.training_id] || [];
-    const origem = reqSet.has(g.training_id) ? 'individual' : (g.required ? 'trilha' : 'avulso');
-    return `<tr>
-      <td>${esc(g.trName)}<div class="hint">exigência: ${origem}${hist.length > 1 ? ' · ' + hist.length + ' registros' : ''}</div></td>
+    const rotulo = { trilha: 'trilha do cargo', individual: 'exigência individual', avulso: 'lançamento avulso' }[g.origem];
+    const conta = noEscopo(g);
+    return `<tr${conta ? '' : ' style="opacity:.62"'}>
+      <td>${esc(g.trName)}<div class="hint">${rotulo}${conta ? '' : ' · <b>não entra nos indicadores</b>'}${hist.length > 1 ? ' · ' + hist.length + ' registros' : ''}</div></td>
       <td>${brDate(g.realizacao) || '—'}</td><td>${brDate(g.vencimento) || '—'}</td>
       <td><span class="badge ${STATUS_CLASS[g.status]}">${g.status}</span></td>
       <td style="white-space:nowrap">
@@ -1386,7 +1434,8 @@ window.openLancamentos = async (empId) => {
   }).join('') || '<tr><td colspan="5" class="empty">Nenhum treinamento exigido nem lançado</td></tr>';
 
   const resumo = { 'VÁLIDO': 0, 'PENDENTE': 0, 'VENCIDO': 0 };
-  for (const g of mine) resumo[g.status]++;
+  for (const g of mine.filter(noEscopo)) resumo[g.status]++;
+  const foraDaConta = mine.filter(g => !noEscopo(g)).length;
 
   openModal('Treinamentos — ' + e.name, `
     <div class="hint" style="margin-bottom:12px">
@@ -1394,6 +1443,7 @@ window.openLancamentos = async (empId) => {
       &nbsp;|&nbsp; <span class="badge valido">${resumo['VÁLIDO']} válidos</span>
       <span class="badge pendente">${resumo['PENDENTE']} pendentes</span>
       <span class="badge vencido">${resumo['VENCIDO']} vencidos</span>
+      ${foraDaConta ? `<span class="badge role">${foraDaConta} fora da conta</span>` : ''}
     </div>
     <div class="tbl-wrap"><table class="tbl">
       <colgroup><col style="width:36%"><col style="width:13%"><col style="width:13%"><col style="width:12%"><col style="width:26%"></colgroup>
@@ -1645,11 +1695,50 @@ document.querySelectorAll('#mainTabs button').forEach(b => b.addEventListener('c
 ['fEmpresa', 'fCargo', 'fTreinamento', 'fSituacao', 'fFaixa'].forEach(id =>
   $(id).addEventListener('change', renderTab));
 $('fBusca').addEventListener('input', () => renderTab());
+$('fEscopo').value = ESCOPO;
+$('fEscopo').addEventListener('change', (e) => {
+  ESCOPO = e.target.value;
+  localStorage.setItem('painelEscopo', ESCOPO);   // a escolha vale nos próximos acessos
+  renderTab();
+});
 $('btnLimpar').addEventListener('click', () => {
   ['fEmpresa', 'fCargo', 'fTreinamento', 'fSituacao', 'fFaixa'].forEach(id => $(id).value = '');
   $('fBusca').value = '';
-  renderTab();
+  renderTab();   // o escopo não é limpo: é uma definição, não um filtro pontual
 });
+
+// Lista o que está fora da conta e leva ao ajuste da trilha.
+window.verForaDaTrilha = () => {
+  const fora = ROWS.filter(r => !noEscopo(r))
+    .sort((a, b) => a.empName.localeCompare(b.empName, 'pt-BR') || a.trName.localeCompare(b.trName, 'pt-BR'));
+  const porCargo = {};
+  for (const r of fora) {
+    const k = r.cargo + ' — ' + r.companyShort;
+    porCargo[k] = porCargo[k] || { total: 0, pend: 0, treinos: new Set() };
+    porCargo[k].total++;
+    if (r.status === 'PENDENTE') porCargo[k].pend++;
+    porCargo[k].treinos.add(r.trName);
+  }
+  openModal('Registros fora da conta dos indicadores', `
+    <p class="hint">Estes treinamentos estão cadastrados para as pessoas, mas não constam na
+    trilha do cargo delas — por isso não entram nos números. Para passarem a contar, inclua o
+    treinamento na trilha do cargo em <b>Administração → Cargos e Trilhas</b>, ou mude o escopo
+    na barra de filtros.</p>
+    <div class="tbl-wrap" style="max-height:420px"><table class="tbl fixa">
+      <colgroup><col style="width:40%"><col style="width:12%"><col style="width:12%"><col style="width:36%"></colgroup>
+      <thead><tr><th>Cargo</th><th style="text-align:center">Registros</th>
+        <th style="text-align:center">Pendentes</th><th>Treinamentos</th></tr></thead><tbody>
+      ${Object.entries(porCargo).sort((a, b) => b[1].pend - a[1].pend).map(([cargo, d]) => `<tr>
+        <td>${esc(cargo)}</td>
+        <td style="text-align:center">${d.total}</td>
+        <td style="text-align:center;font-weight:700;color:${d.pend ? 'var(--amber)' : 'var(--muted)'}">${d.pend}</td>
+        <td class="hint" style="font-size:12px">${esc([...d.treinos].join(', '))}</td></tr>`).join('') ||
+        '<tr><td colspan="4" class="empty">Nada fora da conta</td></tr>'}
+    </tbody></table></div>`,
+    pode('config') ? [{ label: 'Ir para Cargos e Trilhas', cls: 'btn-primary',
+      onClick: () => { closeModal(); irParaAdmin('cargostrilhas', ''); } }] : [],
+    'media');
+};
 // ---------- manter os indicadores sempre atuais ----------
 // Um lançamento feito aqui já recarrega tudo. Estes mecanismos cobrem o resto:
 // outra pessoa lançando ao mesmo tempo, outra aba do navegador, ou a página
