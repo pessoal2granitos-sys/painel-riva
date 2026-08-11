@@ -142,7 +142,12 @@ main { max-width: 1440px; margin: 0 auto; padding: 22px 28px 60px; }
 .grid.cols-2 { grid-template-columns: 1fr 1fr; }
 .grid.cols-3 { grid-template-columns: 1fr 1fr 1fr; }
 .grid.split-13 { grid-template-columns: 2fr 1fr; }
-@media (max-width: 1000px) { .grid.cols-2, .grid.cols-3, .grid.split-13 { grid-template-columns: 1fr; } }
+/* Para quando o painel da direita é uma tabela larga: ela recebe mais espaço
+   que o gráfico de barras, que se vira bem em pouca largura. */
+.grid.split-31 { grid-template-columns: 1fr 1.55fr; }
+@media (max-width: 1100px) {
+  .grid.cols-2, .grid.cols-3, .grid.split-13, .grid.split-31 { grid-template-columns: 1fr; }
+}
 
 .card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px 20px; }
 .card h3 { font-size: 14px; color: var(--navy); margin-bottom: 14px; }
@@ -166,6 +171,13 @@ table.tbl thead th:hover { background: var(--navy-light); }
 table.tbl tbody td { padding: 8px 12px; border-bottom: 1px solid var(--line); }
 table.tbl tbody tr:nth-child(even) { background: #f7fafc; }
 table.tbl tbody tr:hover { background: #fef4ec; }
+
+/* Tabela que precisa caber num espaço estreito: as larguras do colgroup passam a
+   ser obrigatórias e o cabeçalho pode quebrar em duas linhas, então nunca sobra
+   conteúdo para o lado nem aparece rolagem horizontal desnecessária. */
+table.tbl.fixa { table-layout: fixed; width: 100%; }
+table.tbl.fixa thead th { white-space: normal; padding: 8px 8px; line-height: 1.25; }
+table.tbl.fixa tbody td { padding: 8px; overflow-wrap: anywhere; }
 
 .badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 10.5px; font-weight: 700; letter-spacing: .04em; }
 .badge.valido { background: #e2f3e6; color: var(--green); }

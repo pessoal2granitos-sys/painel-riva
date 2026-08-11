@@ -301,15 +301,15 @@ function renderVisao() {
           <div class="val">${fmtN(f.value)}</div></div>`).join('')}
       </div>
     </div>
-    <div class="grid split-13">
+    <div class="grid split-31">
       <div class="card">
         <h3>Treinamentos com mais não conformidades <small>pendentes + vencidos</small></h3>
         ${hbars(trItems, () => 'var(--red)')}
       </div>
       <div class="card">
-        <h3>Colaboradores com maior pendência</h3>
-        <div class="tbl-wrap"><table class="tbl">
-        <colgroup><col style="width:32%"><col style="width:18%"><col style="width:26%"><col style="width:8%"><col style="width:8%"><col style="width:8%"></colgroup>
+        <h3>Colaboradores com maior pendência <small>${fmtN(empItems.length)} com algo em aberto</small></h3>
+        <div class="tbl-wrap"><table class="tbl fixa">
+        <colgroup><col style="width:30%"><col style="width:17%"><col style="width:29%"><col style="width:8%"><col style="width:8%"><col style="width:8%"></colgroup>
         <thead><tr>
           <th>Colaborador</th><th>Empresa</th><th>Função</th><th style="text-align:center">Pend.</th><th style="text-align:center">Venc.</th><th style="text-align:center">Ader.</th>
         </tr></thead><tbody>
