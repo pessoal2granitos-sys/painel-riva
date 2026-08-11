@@ -186,6 +186,8 @@ table.tbl tbody tr:hover { background: #fef4ec; }
 table.tbl.fixa { table-layout: fixed; width: 100%; }
 table.tbl.fixa thead th { white-space: normal; padding: 8px 8px; line-height: 1.25; }
 table.tbl.fixa tbody td { padding: 8px; overflow-wrap: anywhere; }
+/* Em tela estreita a etiqueta de situação não pode empurrar a coluna. */
+table.tbl.fixa .badge { padding: 3px 7px; font-size: 10px; max-width: 100%; }
 
 .badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 10.5px; font-weight: 700; letter-spacing: .04em; }
 .badge.valido { background: #e2f3e6; color: var(--green); }

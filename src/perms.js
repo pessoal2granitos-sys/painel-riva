@@ -7,6 +7,7 @@
 const PAINEIS = [
   { chave: 'visao',        nome: 'Visão Geral',            desc: 'Aderência, pendentes, vencidos e ranking de colaboradores' },
   { chave: 'vencimentos',  nome: 'Vencimentos',            desc: 'O que vence em 30/60/90 dias e a agenda detalhada' },
+  { chave: 'pendencias',   nome: 'Pendências e Atenção',   desc: 'Lista de tudo que precisa de ação, com exportação em Excel' },
   { chave: 'cargos',       nome: 'Cargos e Empresas',      desc: 'Aderência por cargo e matriz empresa × cargo' },
   { chave: 'custo',        nome: 'Carga Horária e Custo',  desc: 'Horas e custo estimado para regularizar' },
   { chave: 'qualidade',    nome: 'Qualidade dos Dados',    desc: 'Inconsistências e lacunas de cadastro' },
@@ -47,7 +48,7 @@ const PADRAO = [
   {
     name: 'Líder', scope: 'team', is_system: 1,
     description: 'Enxerga apenas os indicadores da própria equipe',
-    permissions: Object.fromEntries(TODAS.map(k => [k, ['visao', 'vencimentos', 'cargos', 'exportar'].includes(k)])),
+    permissions: Object.fromEntries(TODAS.map(k => [k, ['visao', 'vencimentos', 'pendencias', 'cargos', 'exportar'].includes(k)])),
   },
 ];
 

@@ -245,15 +245,16 @@ function renderAvisoEscopo(visivel) {
 }
 
 function renderTab() {
-  const dash = ['visao', 'vencimentos', 'cargos', 'custo', 'qualidade'].includes(currentTab);
+  const dash = ['visao', 'vencimentos', 'pendencias', 'cargos', 'custo', 'qualidade'].includes(currentTab);
   $('filterBar').style.display = dash ? '' : 'none';
   renderAvisoEscopo(dash);
   document.querySelectorAll('main > section').forEach(s => s.style.display = 'none');
   const alvo = $('tab-' + currentTab);
   if (!alvo) return;
   alvo.style.display = '';
-  const render = { visao: renderVisao, vencimentos: renderVencimentos, cargos: renderCargos,
-                   custo: renderCusto, qualidade: renderQualidade, admin: renderAdmin }[currentTab];
+  const render = { visao: renderVisao, vencimentos: renderVencimentos, pendencias: renderPendencias,
+                   cargos: renderCargos, custo: renderCusto, qualidade: renderQualidade,
+                   admin: renderAdmin }[currentTab];
   if (render) render();
 }
 
@@ -508,6 +509,245 @@ function renderVencimentos() {
     },
     plugins: [barValueLabels]
   });
+}
+
+// ===== Pendências e Pontos de Atenção =====
+// Reúne, num só lugar, tudo que precisa de ação: treinamentos em aberto e
+// inconsistências de cadastro. Tudo o que aparece aqui sai também no Excel.
+let pendAba = 'abertos';
+
+function dadosPendencias() {
+  const linhas = fRows();
+  const pendentes = linhas.filter(r => r.status === 'PENDENTE');
+  const vencidos = linhas.filter(r => r.status === 'VENCIDO');
+  const aVencer = linhas.filter(r => r.status === 'VÁLIDO' && r.dias <= 90);
+  const inconsistencias = verificacoesQualidade().filter(c => !c.informativo && c.itens.length);
+  const foraDaConta = ROWS.filter(r => !noEscopo(r));
+  return { linhas, pendentes, vencidos, aVencer, inconsistencias, foraDaConta };
+}
+
+function renderPendencias() {
+  const d = dadosPendencias();
+  const afetados = new Set([...d.pendentes, ...d.vencidos].map(r => r.employee_id)).size;
+  const horas = [...d.pendentes, ...d.vencidos].reduce((s, r) => s + (r.horas || 0), 0);
+  const totalInconsist = d.inconsistencias.reduce((s, c) => s + c.itens.length, 0);
+
+  const abas = [
+    { id: 'abertos', nome: 'Em aberto', qtd: d.pendentes.length + d.vencidos.length },
+    { id: 'vencer', nome: 'A vencer em 90 dias', qtd: d.aVencer.length },
+    { id: 'cadastro', nome: 'Inconsistências de cadastro', qtd: totalInconsist },
+    { id: 'fora', nome: 'Fora da conta dos indicadores', qtd: d.foraDaConta.length },
+  ];
+
+  $('tab-pendencias').innerHTML = `
+    <div class="kpis">
+      ${kpi('Pendentes', fmtN(d.pendentes.length), 'nunca realizados', d.pendentes.length ? 'amber' : 'green')}
+      ${kpi('Vencidos', fmtN(d.vencidos.length), 'fora da validade', d.vencidos.length ? 'red' : 'green')}
+      ${kpi('A vencer em 90 dias', fmtN(d.aVencer.length), 'programar turma', 'orange')}
+      ${kpi('Colaboradores afetados', fmtN(afetados), 'com algo em aberto')}
+      ${kpi('Inconsistências', fmtN(totalInconsist), 'no cadastro', totalInconsist ? 'amber' : 'green')}
+      ${kpi('Horas para regularizar', fmtH(horas) + ' h', 'formação + reciclagem', 'green')}
+    </div>
+
+    <div class="toolbar">
+      <div class="subtabs" style="margin:0">
+        ${abas.map(a => `<button data-p="${a.id}" class="${a.id === pendAba ? 'active' : ''}">
+          ${esc(a.nome)} <span class="pill-count">${fmtN(a.qtd)}</span></button>`).join('')}
+      </div>
+      <div style="flex:1"></div>
+      <button class="btn-primary" id="btnExcelPend">⬇ Baixar Excel completo</button>
+    </div>
+    <p class="hint" style="margin:-6px 0 14px">
+      O Excel traz todas as abas acima em um único arquivo, já com os filtros que você aplicou no topo.
+    </p>
+    <div id="pendConteudo"></div>`;
+
+  document.querySelectorAll('#tab-pendencias .subtabs button').forEach(b =>
+    b.addEventListener('click', () => { pendAba = b.dataset.p; renderPendencias(); }));
+  $('btnExcelPend').addEventListener('click', () => baixarExcelPendencias($('btnExcelPend')));
+
+  ({ abertos: pendAbertos, vencer: pendAVencer, cadastro: pendCadastro, fora: pendFora }[pendAba])(d);
+}
+
+// Tabela reaproveitada pelas abas de treinamentos.
+function tabelaTreinamentos(itens, id, colunas) {
+  const render = () => {
+    const q = $(id + 'Busca').value.trim().toLowerCase();
+    const lista = itens.filter(r => !q ||
+      (r.empName + ' ' + r.trName + ' ' + r.cargo + ' ' + r.companyShort).toLowerCase().includes(q));
+    $(id + 'Resumo').innerHTML = '<b>' + fmtN(lista.length) + '</b> de ' + fmtN(itens.length) + ' registros' +
+      (lista.length > 500 ? ' · mostrando os 500 primeiros' : '');
+    $(id + 'Body').innerHTML = lista.slice(0, 500).map(colunas.linha).join('') ||
+      '<tr><td colspan="' + colunas.cabecalho.length + '" class="empty">Nada encontrado</td></tr>';
+  };
+  $('pendConteudo').innerHTML = `
+    <div class="card">
+      <div class="filtros-secao" style="box-shadow:none;padding:0 0 12px;background:transparent">
+        <div class="f" style="flex:2"><label>Buscar</label>
+          <input type="search" id="${id}Busca" placeholder="colaborador, treinamento, função ou empresa"></div>
+      </div>
+      <div class="hint" id="${id}Resumo" style="margin-bottom:8px"></div>
+      <div class="tbl-wrap" style="max-height:540px"><table class="tbl fixa">
+        <colgroup>${colunas.larguras.map(w => `<col style="width:${w}">`).join('')}</colgroup>
+        <thead><tr>${colunas.cabecalho.map(c => `<th>${c}</th>`).join('')}</tr></thead>
+        <tbody id="${id}Body"></tbody></table></div>
+    </div>`;
+  $(id + 'Busca').addEventListener('input', render);
+  render();
+}
+
+function pendAbertos(d) {
+  const itens = [...d.vencidos, ...d.pendentes]
+    .sort((a, b) => (a.dias ?? 99999) - (b.dias ?? 99999));
+  tabelaTreinamentos(itens, 'pAb', {
+    larguras: ['22%', '13%', '18%', '23%', '10%', '7%', '7%'],
+    cabecalho: ['Colaborador', 'Empresa', 'Função', 'Treinamento', 'Situação', 'Dias', 'Horas'],
+    linha: (r) => `<tr>
+      <td>${esc(r.empName)}</td><td>${esc(r.companyShort)}</td><td>${esc(r.cargo)}</td>
+      <td>${esc(r.trName)}</td>
+      <td><span class="badge ${STATUS_CLASS[r.status]}">${r.status}</span></td>
+      <td style="text-align:center;font-weight:700;color:var(--red)">${r.dias != null ? r.dias : '—'}</td>
+      <td style="text-align:center">${r.horas ? fmtH(r.horas) + 'h' : '—'}</td></tr>`,
+  });
+}
+
+function pendAVencer(d) {
+  const itens = [...d.aVencer].sort((a, b) => a.dias - b.dias);
+  tabelaTreinamentos(itens, 'pVe', {
+    larguras: ['23%', '13%', '18%', '24%', '11%', '11%'],
+    cabecalho: ['Colaborador', 'Empresa', 'Função', 'Treinamento', 'Vencimento', 'Faltam'],
+    linha: (r) => `<tr>
+      <td>${esc(r.empName)}</td><td>${esc(r.companyShort)}</td><td>${esc(r.cargo)}</td>
+      <td>${esc(r.trName)}</td><td style="text-align:center">${brDate(r.vencimento)}</td>
+      <td style="text-align:center;font-weight:700;color:${r.dias <= 30 ? 'var(--red)' : 'var(--amber)'}">${r.dias} dias</td></tr>`,
+  });
+}
+
+function pendCadastro(d) {
+  $('pendConteudo').innerHTML = d.inconsistencias.length ? `
+    <div class="grid cols-2">
+      ${d.inconsistencias.map(c => `
+        <div class="card">
+          <h3>${esc(c.nome)} <small>${fmtN(c.itens.length)} item(ns)</small></h3>
+          <p class="hint" style="margin:-6px 0 10px">${esc(c.porque)}</p>
+          <div class="tbl-wrap" style="max-height:260px"><table class="tbl"><tbody>
+            ${c.itens.slice(0, 100).map(i => `<tr><td><b>${esc(i.titulo)}</b>
+              <div class="hint">${esc(i.sub)}</div></td></tr>`).join('')}
+          </tbody></table></div>
+          ${c.itens.length > 100 ? `<p class="hint">… e mais ${fmtN(c.itens.length - 100)}. O Excel traz a lista completa.</p>` : ''}
+        </div>`).join('')}
+    </div>`
+    : '<div class="card"><div class="empty" style="color:var(--green);font-weight:600">✔ Nenhuma inconsistência de cadastro.</div></div>';
+}
+
+function pendFora(d) {
+  const itens = [...d.foraDaConta].sort((a, b) => a.empName.localeCompare(b.empName, 'pt-BR'));
+  $('pendConteudo').innerHTML = `
+    <div class="card">
+      <p class="hint" style="margin-bottom:12px">Treinamentos cadastrados para as pessoas que <b>não constam na trilha
+      do cargo</b> delas. No escopo atual (<b>${esc(ESCOPO_LABEL[ESCOPO])}</b>) eles não entram nos indicadores.
+      Para passarem a contar, inclua o treinamento na trilha em <b>Administração → Cargos e Trilhas</b>.</p>
+      <div class="tbl-wrap" style="max-height:520px"><table class="tbl fixa">
+        <colgroup><col style="width:24%"><col style="width:13%"><col style="width:20%"><col style="width:23%"><col style="width:10%"><col style="width:10%"></colgroup>
+        <thead><tr><th>Colaborador</th><th>Empresa</th><th>Função</th><th>Treinamento</th><th>Origem</th><th>Situação</th></tr></thead>
+        <tbody>${itens.slice(0, 500).map(r => `<tr>
+          <td>${esc(r.empName)}</td><td>${esc(r.companyShort)}</td><td>${esc(r.cargo)}</td><td>${esc(r.trName)}</td>
+          <td>${r.origem === 'individual' ? 'individual' : 'avulso'}</td>
+          <td><span class="badge ${STATUS_CLASS[r.status]}">${r.status}</span></td></tr>`).join('') ||
+          '<tr><td colspan="6" class="empty">Nada fora da conta</td></tr>'}</tbody></table></div>
+    </div>`;
+}
+
+// Carrega a biblioteca de Excel só quando o botão é usado, para não pesar a
+// abertura do painel com quase 500 KB.
+function carregarBibliotecaExcel() {
+  if (window.XLSX) return Promise.resolve(window.XLSX);
+  return new Promise((ok, falhou) => {
+    const s = document.createElement('script');
+    s.src = '/js/xlsx.core.min.js';
+    s.onload = () => ok(window.XLSX);
+    s.onerror = () => falhou(new Error('Não foi possível carregar o gerador de Excel'));
+    document.head.appendChild(s);
+  });
+}
+
+async function baixarExcelPendencias(botao) {
+  const textoOriginal = botao.textContent;
+  botao.disabled = true;
+  botao.textContent = '⬇ Gerando…';
+  try {
+    const XLSX = await carregarBibliotecaExcel();
+    const d = dadosPendencias();
+    const wb = XLSX.utils.book_new();
+    const add = (nome, linhas, larguras) => {
+      const ws = XLSX.utils.aoa_to_sheet(linhas);
+      ws['!cols'] = larguras.map(w => ({ wch: w }));
+      XLSX.utils.book_append_sheet(wb, ws, nome);
+    };
+    const filtroAtivo = [
+      $('fEmpresa').value && 'Empresa: ' + $('fEmpresa').value,
+      $('fCargo').value && 'Cargo: ' + $('fCargo').value,
+      $('fTreinamento').value && 'Treinamento: ' + $('fTreinamento').value,
+      $('fBusca').value && 'Busca: ' + $('fBusca').value,
+    ].filter(Boolean).join(' · ') || 'nenhum';
+
+    // --- Resumo ---
+    const afetados = new Set([...d.pendentes, ...d.vencidos].map(r => r.employee_id)).size;
+    const horas = [...d.pendentes, ...d.vencidos].reduce((s, r) => s + (r.horas || 0), 0);
+    add('Resumo', [
+      ['PENDÊNCIAS E PONTOS DE ATENÇÃO — RIVA STONES'],
+      [],
+      ['Posição em', brDate(DS.today)],
+      ['Gerado em', dataHoraLocal(new Date().toISOString().replace('T', ' ').slice(0, 19)) || ''],
+      ['Emitido por', ME.name],
+      ['Escopo dos indicadores', ESCOPO_LABEL[ESCOPO]],
+      ['Filtros aplicados', filtroAtivo],
+      [],
+      ['INDICADOR', 'QUANTIDADE'],
+      ['Treinamentos pendentes (nunca realizados)', d.pendentes.length],
+      ['Treinamentos vencidos', d.vencidos.length],
+      ['A vencer em até 90 dias', d.aVencer.length],
+      ['Colaboradores com algo em aberto', afetados],
+      ['Horas para regularizar', Math.round(horas * 10) / 10],
+      ['Inconsistências de cadastro', d.inconsistencias.reduce((s, c) => s + c.itens.length, 0)],
+      ['Registros fora da conta dos indicadores', d.foraDaConta.length],
+    ], [46, 16]);
+
+    const cabTreino = ['Colaborador', 'Empresa', 'Função', 'Treinamento', 'Situação',
+                       'Realização', 'Vencimento', 'Dias', 'Horas', 'Origem'];
+    const linhaTreino = (r) => [r.empName, r.companyShort, r.cargo, r.trName, r.status,
+      brDate(r.realizacao), brDate(r.vencimento), r.dias, r.horas || '', r.origem];
+    const largTreino = [34, 22, 28, 34, 11, 12, 12, 8, 8, 12];
+
+    add('Pendentes', [cabTreino, ...d.pendentes
+      .sort((a, b) => a.empName.localeCompare(b.empName, 'pt-BR')).map(linhaTreino)], largTreino);
+    add('Vencidos', [cabTreino, ...d.vencidos
+      .sort((a, b) => (a.dias ?? 0) - (b.dias ?? 0)).map(linhaTreino)], largTreino);
+    add('A vencer 90 dias', [cabTreino, ...d.aVencer
+      .sort((a, b) => a.dias - b.dias).map(linhaTreino)], largTreino);
+
+    // --- Inconsistências ---
+    const linhasInc = [['Tipo de inconsistência', 'Item', 'Detalhe', 'Gravidade', 'Por que importa']];
+    for (const c of d.inconsistencias) {
+      for (const i of c.itens) {
+        linhasInc.push([c.nome, i.titulo, i.sub, c.grave ? 'Crítica' : 'Atenção', c.porque]);
+      }
+    }
+    add('Inconsistências', linhasInc, [38, 36, 46, 11, 62]);
+
+    add('Fora da trilha', [['Colaborador', 'Empresa', 'Função', 'Treinamento', 'Origem', 'Situação'],
+      ...d.foraDaConta.sort((a, b) => a.empName.localeCompare(b.empName, 'pt-BR'))
+        .map(r => [r.empName, r.companyShort, r.cargo, r.trName, r.origem, r.status])], [34, 22, 28, 34, 12, 11]);
+
+    const nome = 'Pendencias e Atencao ' + DS.today.split('-').reverse().join('_') + '.xlsx';
+    XLSX.writeFile(wb, nome);
+    toast('Excel gerado com ' + fmtN(d.pendentes.length + d.vencidos.length) + ' pendências');
+  } catch (e) {
+    toast(e.message || 'Falha ao gerar o Excel', true);
+  } finally {
+    botao.disabled = false;
+    botao.textContent = textoOriginal;
+  }
 }
 
 // ===== Cargos e Empresas =====

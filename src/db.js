@@ -194,6 +194,17 @@ function init() {
         const id = porNome.get(POR_PAPEL[u.role]);
         if (id) await run('UPDATE users SET profile_id = ? WHERE id = ?', id, u.id);
       }
+
+      // Permissões criadas depois que perfis já existiam: quem enxerga
+      // Vencimentos passa a enxergar também o painel de Pendências.
+      for (const p of await all('SELECT id, name, permissions FROM profiles')) {
+        let perm;
+        try { perm = JSON.parse(p.permissions || '{}'); } catch { perm = {}; }
+        if (perm.pendencias === undefined) {
+          perm.pendencias = p.name === 'Administradora' ? true : !!perm.vencimentos;
+          await run('UPDATE profiles SET permissions = ? WHERE id = ?', JSON.stringify(perm), p.id);
+        }
+      }
     })();
   }
   return ready;
