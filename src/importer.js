@@ -231,25 +231,54 @@ async function importWorkbook(buffer, options = {}) {
   }
 
   if (trilha) {
-    const inserts = [];
+    // A aba Trilha por Cargo é a definição oficial: para cada cargo que ela
+    // descreve, a trilha no sistema passa a ser exatamente aquela lista. Sem
+    // isso, um treinamento retirado da planilha continuaria sendo cobrado.
+    // Cargos que a planilha não menciona ficam intactos.
+    const desejada = new Map();   // cargo_id -> Set(training_id)
     for (const r of trilha.slice(1)) {
-      if (!r || !r[0] || !r[1] || !r[2]) continue;
-      const nrs = String(r[2]);
-      if (/SEM TREINAMENTOS/i.test(nrs)) continue;
+      if (!r || !r[0] || !r[1]) continue;
       const comp = reg.companyByKey.get(normKey(cleanName(r[1])));
       if (!comp) continue;
       const cargo = reg.cargoByKey.get(comp.id + '|' + normKey(cleanName(r[0])));
       if (!cargo) continue;
-      for (const linha of nrs.split(/\r?\n/)) {
-        const nome = cleanName(linha);
-        if (!nome) continue;
-        const tr = reg.trainingByKey.get(trainingKey(nome));
-        if (!tr) continue;
-        inserts.push(['INSERT OR IGNORE INTO trails (cargo_id, training_id) VALUES (?, ?)', cargo.id, tr.id]);
-        stats.trilhas++;
+      const nrs = String(r[2] || '');
+      const set = desejada.get(cargo.id) || new Set();
+      if (!/SEM TREINAMENTOS/i.test(nrs)) {
+        for (const linha of nrs.split(/\r?\n/)) {
+          const nome = cleanName(linha);
+          if (!nome) continue;
+          const tr = reg.trainingByKey.get(trainingKey(nome));
+          if (tr) set.add(tr.id);
+        }
       }
+      desejada.set(cargo.id, set);
     }
-    for (let i = 0; i < inserts.length; i += 500) await db.batch(inserts.slice(i, i + 500));
+
+    const atuais = new Map();
+    for (const t of await db.all('SELECT cargo_id, training_id FROM trails')) {
+      if (!atuais.has(t.cargo_id)) atuais.set(t.cargo_id, new Set());
+      atuais.get(t.cargo_id).add(t.training_id);
+    }
+
+    const cmds = [];
+    for (const [cargoId, set] of desejada) {
+      const antes = atuais.get(cargoId) || new Set();
+      const remover = [...antes].filter(id => !set.has(id));
+      const incluir = [...set].filter(id => !antes.has(id));
+      if (!remover.length && !incluir.length) continue;
+      for (const id of remover) {
+        cmds.push(['DELETE FROM trails WHERE cargo_id = ? AND training_id = ?', cargoId, id]);
+        stats.trilhasRemovidas = (stats.trilhasRemovidas || 0) + 1;
+      }
+      for (const id of incluir) {
+        cmds.push(['INSERT OR IGNORE INTO trails (cargo_id, training_id) VALUES (?, ?)', cargoId, id]);
+        stats.trilhasIncluidas = (stats.trilhasIncluidas || 0) + 1;
+      }
+      stats.cargosAjustados = (stats.cargosAjustados || 0) + 1;
+    }
+    stats.trilhas = [...desejada.values()].reduce((s, v) => s + v.size, 0);
+    for (let i = 0; i < cmds.length; i += 500) await db.batch(cmds.slice(i, i + 500));
   }
 
   const totals = await db.all('SELECT (SELECT COUNT(*) FROM companies) empresas, (SELECT COUNT(*) FROM cargos) cargos');
