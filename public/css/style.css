@@ -210,11 +210,21 @@ table.tbl tbody tr:hover { background: #fef4ec; }
 /* modal */
 .modal-back { display: none; position: fixed; inset: 0; background: rgba(14, 44, 72, .5); z-index: 100; align-items: center; justify-content: center; padding: 20px; }
 .modal-back.open { display: flex; }
-.modal { background: #fff; border-radius: 16px; width: 560px; max-width: 96vw; max-height: 92vh; overflow: auto; box-shadow: 0 24px 70px rgba(0,0,0,.35); }
-.modal .m-head { background: var(--navy); color: #fff; padding: 15px 22px; border-radius: 16px 16px 0 0; display: flex; align-items: center; }
+/* Cabeçalho e rodapé fixos; só o miolo rola. Antes a janela inteira rolava e os
+   botões de salvar saíam da vista. */
+.modal {
+  background: #fff; border-radius: 16px; width: 560px; max-width: 96vw; max-height: 92vh;
+  display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 24px 70px rgba(0,0,0,.35);
+}
+.modal.larga { width: 1040px; }
+.modal.media { width: 760px; }
+.modal .m-head { background: var(--navy); color: #fff; padding: 15px 22px; display: flex; align-items: center; flex: 0 0 auto; }
 .modal .m-head h3 { font-size: 15px; flex: 1; }
 .modal .m-head button { background: none; border: none; color: #fff; font-size: 20px; }
-.modal .m-body { padding: 20px 22px; }
+.modal .m-body { padding: 20px 22px; flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; }
+.modal .m-foot { flex: 0 0 auto; border-top: 1px solid var(--line); background: #fbfcfd; border-radius: 0 0 16px 16px; }
+/* Numa janela larga a tabela usa a altura disponível em vez de um limite fixo. */
+.modal.larga .tbl-wrap, .modal.media .tbl-wrap { max-height: none; }
 .modal .m-body label { display: block; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); margin: 12px 0 4px; }
 .modal .m-body input, .modal .m-body select, .modal .m-body textarea {
   width: 100%; padding: 9px 11px; border: 1.5px solid var(--line); border-radius: 9px;

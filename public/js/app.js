@@ -921,7 +921,7 @@ window.editarPerfil = (id) => {
       closeModal(); toast('Perfil salvo');
       await loadAll();
       cadTab = 'perfis'; renderAdmin();
-    } }]);
+    } }], 'media');
 };
 
 window.excluirPerfil = async (id) => {
@@ -1167,7 +1167,7 @@ window.editCargo = (id) => {
         await api('/api/cargos/' + r.id, { method: 'PUT', body: JSON.stringify({ trail_training_ids: body.trail_training_ids }) });
       }
       closeModal(); toast('Cargo salvo'); await loadAll();
-    } }]);
+    } }], 'media');
 };
 window.delCargo = async (id) => {
   if (!await confirmar('Excluir este cargo? Só é possível se nenhum colaborador o utilizar.')) return;
@@ -1220,7 +1220,7 @@ window.editTraining = (id) => {
       if (t) await api('/api/trainings/' + t.id, { method: 'PUT', body: JSON.stringify(body) });
       else await api('/api/trainings', { method: 'POST', body: JSON.stringify(body) });
       closeModal(); toast('Treinamento salvo'); await loadAll();
-    } }]);
+    } }], 'media');
 };
 window.delTraining = async (id) => {
   if (!await confirmar('Excluir este treinamento? Só é possível se não houver lançamentos.')) return;
@@ -1385,14 +1385,25 @@ window.openLancamentos = async (empId) => {
       </td></tr>`;
   }).join('') || '<tr><td colspan="5" class="empty">Nenhum treinamento exigido nem lançado</td></tr>';
 
+  const resumo = { 'VÁLIDO': 0, 'PENDENTE': 0, 'VENCIDO': 0 };
+  for (const g of mine) resumo[g.status]++;
+
   openModal('Treinamentos — ' + e.name, `
-    <div class="hint" style="margin-bottom:10px">${esc(e.cargo_name || '—')} · ${esc(e.company_short || e.company_name)}${e.admissao ? ' · admitido em ' + brDate(e.admissao) : ''}</div>
-    <div class="tbl-wrap" style="max-height:340px"><table class="tbl"><thead><tr>
-      <th>Treinamento</th><th>Realização</th><th>Vencimento</th><th>Situação</th><th>Ações</th></tr></thead><tbody>
+    <div class="hint" style="margin-bottom:12px">
+      ${esc(e.cargo_name || '—')} · ${esc(e.company_short || e.company_name)}${e.admissao ? ' · admitido em ' + brDate(e.admissao) : ''}
+      &nbsp;|&nbsp; <span class="badge valido">${resumo['VÁLIDO']} válidos</span>
+      <span class="badge pendente">${resumo['PENDENTE']} pendentes</span>
+      <span class="badge vencido">${resumo['VENCIDO']} vencidos</span>
+    </div>
+    <div class="tbl-wrap"><table class="tbl">
+      <colgroup><col style="width:36%"><col style="width:13%"><col style="width:13%"><col style="width:12%"><col style="width:26%"></colgroup>
+      <thead><tr>
+        <th>Treinamento</th><th>Realização</th><th>Vencimento</th><th>Situação</th><th>Ações</th></tr></thead><tbody>
       ${situacao}</tbody></table></div>
-    <p class="hint" style="margin-top:10px">A exigência vem da <b>trilha</b> do cargo ou é <b>individual</b> (cobrada só desta pessoa).
+    <p class="hint" style="margin-top:12px">A exigência vem da <b>trilha</b> do cargo ou é <b>individual</b> (cobrada só desta pessoa).
     "Não exigir" remove apenas a exigência individual; se o treinamento estiver na trilha do cargo, ele continua sendo cobrado.</p>`,
-    [{ label: '+ Novo lançamento', cls: 'btn-primary', onClick: () => openRecordModal(empId, null) }]);
+    [{ label: '+ Novo lançamento', cls: 'btn-primary', onClick: () => openRecordModal(empId, null) }],
+    'larga');
 };
 
 window.delRequirement = async (empId, trainingId) => {
@@ -1427,16 +1438,24 @@ window.openRecordModal = function openRecordModal(empId, rec, preTrainingId = nu
     </div>
     <label>Observação</label><input id="mObs" value="${esc(rec?.obs || '')}">`,
     [{ label: 'Salvar', cls: 'btn-primary', onClick: async () => {
+      // Guarda de quem é o lançamento antes de salvar, para voltar à lista dele.
+      let doColaborador = empId;
       if (rec) {
         await api('/api/records/' + rec.id, { method: 'PUT', body: JSON.stringify({
           realizacao: $('mReal').value || null, vencimento: $('mVenc').value || null, obs: $('mObs').value || null }) });
       } else {
         if (!$('mEmp').value) return toast('Selecione o colaborador', true);
+        doColaborador = Number($('mEmp').value);
         await api('/api/records', { method: 'POST', body: JSON.stringify({
-          employee_id: Number($('mEmp').value), training_id: Number($('mTr').value),
+          employee_id: doColaborador, training_id: Number($('mTr').value),
           realizacao: $('mReal').value, vencimento: $('mVenc').value || null, obs: $('mObs').value || null }) });
       }
-      closeModal(); toast('Lançamento salvo'); await loadAll();
+      toast('Lançamento salvo');
+      await loadAll();
+      // Volta para a lista do colaborador, já atualizada, em vez de fechar tudo
+      // e obrigar a pesquisar a pessoa outra vez.
+      if (doColaborador) await openLancamentos(doColaborador);
+      else closeModal();
     } }]);
 };
 
@@ -1554,7 +1573,7 @@ window.editUser = (u, teamIds = []) => {
         await api('/api/users/' + u.id, { method: 'PUT', body: JSON.stringify(body) });
       }
       closeModal(); toast('Usuário salvo'); renderUsuarios();
-    } }]);
+    } }], 'media');
 
   const renderTeam = (q = '') => {
     $('teamList').innerHTML = DS.employees
@@ -1582,9 +1601,12 @@ window.delUser = async (id) => {
 };
 
 // ---------- modal / toast ----------
-function openModal(title, bodyHTML, buttons = []) {
+function openModal(title, bodyHTML, buttons = [], largura = '') {
+  const caixa = document.querySelector('#modalBack .modal');
+  caixa.className = 'modal' + (largura ? ' ' + largura : '');
   $('modalTitle').textContent = title;
   $('modalBody').innerHTML = bodyHTML;
+  $('modalBody').scrollTop = 0;
   $('modalFoot').innerHTML = '';
   const cancel = document.createElement('button');
   cancel.className = 'btn-ghost'; cancel.textContent = 'Cancelar';
