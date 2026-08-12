@@ -418,14 +418,18 @@ function renderVencimentos() {
   agenda.sort((a, b) => (a.dias ?? 99999) - (b.dias ?? 99999));
 
   // Filtro próprio da agenda, além dos filtros gerais do topo.
-  const renderAgendaBody = () => {
-    const busca = ($('agBusca') ? $('agBusca').value : '').trim().toLowerCase();
-    const prazo = $('agPrazo') ? $('agPrazo').value : '';
-    const lista = agenda.filter(a => {
+  const val = (id) => ($(id) ? $(id).value : '');
+  const agendaFiltrada = () => {
+    const busca = val('agBusca').trim().toLowerCase();
+    const prazo = val('agPrazo'), emp = val('agEmpresa'), sit = val('agSituacao'), trn = val('agTreino');
+    return agenda.filter(a => {
       if (busca) {
         const alvo = (a.empName + ' ' + a.trName + ' ' + a.cargo + ' ' + a.company).toLowerCase();
         if (!alvo.includes(busca)) return false;
       }
+      if (emp && a.company !== emp) return false;
+      if (sit && a.status !== sit) return false;
+      if (trn && a.trName !== trn) return false;
       if (prazo === 'vencidos' && a.dias >= 0) return false;
       if (prazo === '30' && !(a.dias >= 0 && a.dias <= 30)) return false;
       if (prazo === '60' && !(a.dias >= 0 && a.dias <= 60)) return false;
@@ -433,9 +437,13 @@ function renderVencimentos() {
       if (prazo === 'criticos' && a.dias > 30) return false;
       return true;
     });
+  };
+
+  const renderAgendaBody = () => {
+    const lista = agendaFiltrada();
     if ($('agResumo')) {
       $('agResumo').innerHTML = '<b>' + fmtN(lista.length) + '</b> de ' + fmtN(agenda.length) + ' registros' +
-        (lista.length > 400 ? ' · mostrando os 400 primeiros' : '');
+        (lista.length > 400 ? ' · a tela mostra os 400 primeiros; o arquivo baixado traz todos' : '');
     }
     $('agendaBody').innerHTML = lista.slice(0, 400).map(a => `<tr>
       <td>${esc(a.empName)}</td><td>${esc(a.company)}</td><td>${esc(a.cargo)}</td><td>${esc(a.trName)}</td>
@@ -444,6 +452,20 @@ function renderVencimentos() {
       <td><span class="badge ${STATUS_CLASS[a.status]}">${a.status}</span></td></tr>`).join('') ||
       '<tr><td colspan="8" class="empty">Nenhum registro com esses filtros</td></tr>';
   };
+
+  // O que vai para o Excel ou PDF: a lista filtrada inteira, sem o corte de tela.
+  const relatorioAgenda = () => ({
+    titulo: 'Agenda de Vencimentos',
+    aba: 'Agenda',
+    colunas: [
+      { nome: 'Colaborador', largura: 20 }, { nome: 'Empresa', largura: 12 },
+      { nome: 'Função', largura: 16 }, { nome: 'Treinamento', largura: 20 },
+      { nome: 'Realização', largura: 9 }, { nome: 'Vencimento', largura: 9 },
+      { nome: 'Dias', largura: 6 }, { nome: 'Situação', largura: 8 },
+    ],
+    linhas: agendaFiltrada().map(a => [a.empName, a.company, a.cargo, a.trName,
+      brDate(a.realizacao), brDate(a.vencimento), a.dias, a.status]),
+  });
 
   $('tab-vencimentos').innerHTML = `
     <div class="kpis">
@@ -469,6 +491,15 @@ function renderVencimentos() {
       <div class="filtros-secao" style="box-shadow:none;padding:0 0 14px;background:transparent">
         <div class="f" style="flex:2"><label>Buscar na agenda</label>
           <input type="search" id="agBusca" placeholder="colaborador, treinamento, função ou empresa"></div>
+        <div class="f"><label>Empresa</label><select id="agEmpresa"><option value="">Todas</option>
+          ${[...new Set(agenda.map(a => a.company))].sort((a, b) => a.localeCompare(b, 'pt-BR'))
+            .map(c => `<option>${esc(c)}</option>`).join('')}</select></div>
+        <div class="f"><label>Treinamento</label><select id="agTreino"><option value="">Todos</option>
+          ${[...new Set(agenda.map(a => a.trName))].sort((a, b) => a.localeCompare(b, 'pt-BR'))
+            .map(t => `<option>${esc(t)}</option>`).join('')}</select></div>
+        <div class="f"><label>Situação</label><select id="agSituacao">
+          <option value="">Todas</option><option>VÁLIDO</option><option>VENCIDO</option>
+        </select></div>
         <div class="f"><label>Prazo</label><select id="agPrazo">
           <option value="">Todos os prazos</option>
           <option value="criticos">Críticos (vencidos + 30 dias)</option>
@@ -479,7 +510,11 @@ function renderVencimentos() {
         </select></div>
         <button class="btn-ghost" id="agLimpar">Limpar</button>
       </div>
-      <div class="hint" id="agResumo" style="margin-bottom:8px"></div>
+      <div class="toolbar" style="margin-bottom:8px">
+        <span class="hint" id="agResumo"></span>
+        <div style="flex:1"></div>
+        ${botoesBaixar('ag')}
+      </div>
       <div class="tbl-wrap" style="max-height:520px"><table class="tbl"><thead><tr>
         <th data-c="empName">Colaborador</th><th data-c="company">Empresa</th><th data-c="cargo">Função</th>
         <th data-c="trName">Treinamento</th><th data-c="realizacao">Realização</th><th data-c="vencimento">Vencimento</th>
@@ -487,8 +522,13 @@ function renderVencimentos() {
       </tr></thead><tbody id="agendaBody"></tbody></table></div>
     </div>`;
   renderAgendaBody();
-  ['agBusca', 'agPrazo'].forEach(id => $(id).addEventListener('input', renderAgendaBody));
-  $('agLimpar').addEventListener('click', () => { $('agBusca').value = ''; $('agPrazo').value = ''; renderAgendaBody(); });
+  const camposAgenda = ['agBusca', 'agEmpresa', 'agTreino', 'agSituacao', 'agPrazo'];
+  camposAgenda.forEach(id => $(id).addEventListener('input', renderAgendaBody));
+  $('agLimpar').addEventListener('click', () => {
+    camposAgenda.forEach(id => { $(id).value = ''; });
+    renderAgendaBody();
+  });
+  ligarBotoesBaixar('ag', relatorioAgenda);
   document.querySelectorAll('#tab-vencimentos thead th[data-c]').forEach(th => th.addEventListener('click', () =>
     sortTable('agenda', agenda, renderAgendaBody, agendaState, th.dataset.c,
       { dias: 'num', realizacao: 'num', vencimento: 'num' })));
@@ -777,6 +817,78 @@ function pendFora(d) {
           <td><span class="badge ${STATUS_CLASS[r.status]}">${r.status}</span></td></tr>`).join('') ||
           '<tr><td colspan="6" class="empty">Nada fora da conta</td></tr>'}</tbody></table></div>
     </div>`;
+}
+
+// ---------- baixar uma tabela em Excel ou PDF ----------
+// Usado pelos painéis: recebe o título, o cabeçalho e as linhas já filtradas.
+// Só aparece para quem tem a permissão de exportar.
+function botoesBaixar(id) {
+  if (!pode('exportar')) return '';
+  return `<button class="btn-ghost" id="${id}Xlsx">⬇ Excel</button>
+          <button class="btn-ghost" id="${id}Pdf">⬇ PDF</button>`;
+}
+
+function ligarBotoesBaixar(id, montar) {
+  if (!pode('exportar')) return;
+  const bx = $(id + 'Xlsx'), bp = $(id + 'Pdf');
+  if (bx) bx.addEventListener('click', () => baixarTabelaExcel(montar(), bx));
+  if (bp) bp.addEventListener('click', () => baixarTabelaPdf(montar(), bp));
+}
+
+// Contexto do relatório: posição, escopo e filtros ativos, para o arquivo se
+// explicar sozinho quando for repassado.
+function contextoRelatorio() {
+  const filtros = [
+    $('fEmpresa').value && 'Empresa: ' + $('fEmpresa').value,
+    $('fCargo').value && 'Cargo: ' + $('fCargo').value,
+    $('fTreinamento').value && 'Treinamento: ' + $('fTreinamento').value,
+    $('fSituacao').value && 'Situação: ' + $('fSituacao').value,
+    $('fBusca').value && 'Busca: ' + $('fBusca').value,
+  ].filter(Boolean).join(' · ');
+  return 'Posição em ' + brDate(DS.today) + ' · contando ' + ESCOPO_LABEL[ESCOPO] +
+         (filtros ? ' · ' + filtros : '');
+}
+
+async function baixarTabelaExcel(rel, botao) {
+  const texto = botao.textContent;
+  botao.disabled = true; botao.textContent = '⬇ Gerando…';
+  try {
+    const XLSX = await carregarBibliotecaExcel();
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet([
+      [rel.titulo], [contextoRelatorio()], [],
+      rel.colunas.map(c => c.nome), ...rel.linhas,
+    ]);
+    ws['!cols'] = rel.colunas.map(c => ({ wch: c.excel || Math.max(12, c.largura * 1.6) }));
+    XLSX.utils.book_append_sheet(wb, ws, (rel.aba || 'Relatório').slice(0, 28));
+    XLSX.writeFile(wb, rel.titulo + ' ' + DS.today.split('-').reverse().join('_') + '.xlsx');
+    toast(fmtN(rel.linhas.length) + ' linhas exportadas');
+  } catch (e) {
+    toast(e.message || 'Falha ao gerar o Excel', true);
+  } finally { botao.disabled = false; botao.textContent = texto; }
+}
+
+async function baixarTabelaPdf(rel, botao) {
+  const texto = botao.textContent;
+  botao.disabled = true; botao.textContent = '⬇ Gerando…';
+  try {
+    const res = await fetch('/api/relatorio/pdf', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ titulo: rel.titulo, subtitulo: contextoRelatorio(),
+                             colunas: rel.colunas, linhas: rel.linhas }),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Falha ao gerar o PDF');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = rel.titulo + ' ' + DS.today.split('-').reverse().join('_') + '.pdf';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    toast('PDF gerado com ' + fmtN(rel.linhas.length) + ' linhas');
+  } catch (e) {
+    toast(e.message, true);
+  } finally { botao.disabled = false; botao.textContent = texto; }
 }
 
 // Carrega a biblioteca de Excel só quando o botão é usado, para não pesar a
@@ -1177,30 +1289,34 @@ const SECOES_ADMIN = [
   { id: 'acesso',        nome: 'Acesso dos Gestores', perm: 'config',        render: () => renderConfigAcesso() },
 ];
 
-// Liga ou desliga a entrada sem login e mostra o endereço a divulgar.
+// Liga ou desliga a entrada sem login, define o que o gestor pode fazer e
+// mostra o endereço a divulgar.
 async function renderConfigAcesso() {
   const cfg = await api('/api/config');
   const endereco = location.origin;
+  const bloqueada = (k) => cfg.bloqueadas.includes(k);
+
+  const item = (i) => `
+    <label class="perm-item ${bloqueada(i.chave) ? 'travada' : ''}" title="${esc(i.desc)}">
+      <input type="checkbox" class="cfgPerm" value="${i.chave}"
+        ${cfg.permsGestor[i.chave] ? 'checked' : ''} ${bloqueada(i.chave) ? 'disabled' : ''}>
+      <span><b>${esc(i.nome)}</b><br><span class="hint">${esc(i.desc)}</span></span>
+      ${bloqueada(i.chave) ? '<span class="badge role">indisponível sem login</span>' : ''}
+    </label>`;
+
   $('cadContent').innerHTML = `
     <div class="grid cols-2">
       <div class="card">
-        <h3>Acesso do gestor sem login</h3>
-        <p class="hint">Com isso ligado, a tela de entrada mostra o botão <b>Acesso do Gestor</b>.
-        Quem clicar vê os painéis Visão Geral, Vencimentos, Cargos e Empresas, Carga Horária e Custo,
-        além dos Avisos — sem digitar senha.</p>
+        <h3>Entrada sem login</h3>
+        <p class="hint">Ligado, a tela de entrada mostra o botão <b>Acesso do Gestor</b> e quem clicar
+        entra direto, sem digitar senha.</p>
         <label style="display:flex;align-items:center;gap:10px;margin:16px 0;font-size:14px">
           <input type="checkbox" id="cfgAcesso" ${cfg.acessoGestor ? 'checked' : ''}
                  style="width:auto;accent-color:var(--orange);transform:scale(1.3)">
           <b>${cfg.acessoGestor ? 'Liberado' : 'Desativado'}</b>
         </label>
-        <p class="hint"><b>O que o gestor não consegue fazer:</b> baixar planilhas ou PDF, abrir a ficha
-        individual de um colaborador, ver as abas de Pendências e Qualidade, nem entrar na Administração.
-        Tudo isso é bloqueado no servidor, não só escondido na tela.</p>
-      </div>
-      <div class="card">
-        <h3>Endereço para divulgar</h3>
-        <p class="hint">Envie este link aos gestores. Eles abrem, clicam em <b>Acesso do Gestor</b> e pronto.</p>
-        <div style="display:flex;gap:8px;margin:14px 0">
+        <h3 style="margin-top:22px">Endereço para divulgar</h3>
+        <div style="display:flex;gap:8px;margin:10px 0">
           <input id="cfgUrl" readonly value="${esc(endereco)}"
                  style="flex:1;padding:10px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:14px">
           <button class="btn-navy" id="btnCopiar">Copiar</button>
@@ -1208,6 +1324,25 @@ async function renderConfigAcesso() {
         <p class="hint" style="color:var(--amber)"><b>Atenção:</b> com o acesso liberado, qualquer pessoa
         que tenha o endereço vê nomes, cargos e situação de treinamento dos colaboradores, sem senha.
         Divulgue apenas internamente e desative aqui se precisar fechar.</p>
+      </div>
+
+      <div class="card">
+        <h3>O que o gestor pode <small>vale para todos que entram sem login</small></h3>
+        <p class="hint" style="margin-bottom:12px">Marque os painéis que ele enxerga e as ações que pode
+        executar. Vale imediatamente, inclusive para quem já estiver com a tela aberta.</p>
+
+        <label style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Painéis</label>
+        <div class="checklist" style="margin:6px 0 16px">${cfg.catalogo.paineis.map(item).join('')}</div>
+
+        <label style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Ações</label>
+        <div class="checklist" style="margin-top:6px">${cfg.catalogo.acoes.map(item).join('')}</div>
+
+        <p class="hint" style="margin-top:12px">As ações marcadas como <b>indisponíveis sem login</b> alteram
+        dados ou contas — o servidor as recusa para quem não se identifica, mesmo que fossem marcadas aqui.</p>
+        <div class="toolbar" style="margin:14px 0 0">
+          <div style="flex:1"></div>
+          <button class="btn-primary" id="btnSalvarPerms">Salvar permissões</button>
+        </div>
       </div>
     </div>`;
 
@@ -1219,6 +1354,13 @@ async function renderConfigAcesso() {
   $('btnCopiar').addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(endereco); toast('Endereço copiado'); }
     catch { $('cfgUrl').select(); toast('Selecione e copie com Ctrl+C', true); }
+  });
+  $('btnSalvarPerms').addEventListener('click', async () => {
+    const permsGestor = {};
+    document.querySelectorAll('.cfgPerm').forEach(c => { permsGestor[c.value] = c.checked; });
+    await api('/api/config', { method: 'PUT', body: JSON.stringify({ permsGestor }) });
+    toast('Permissões do gestor atualizadas');
+    renderConfigAcesso();
   });
 }
 

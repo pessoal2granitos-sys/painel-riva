@@ -197,7 +197,7 @@ function init() {
       if (!userCols.includes('profile_id')) await run('ALTER TABLE users ADD COLUMN profile_id INTEGER REFERENCES profiles(id)');
 
       // Cria os perfis padrão e liga os usuários antigos ao perfil equivalente.
-      const { PADRAO, POR_PAPEL } = require('./perms');
+      const { PADRAO, POR_PAPEL, GESTOR_PUBLICO, permsGestorPublico } = require('./perms');
       const existentes = await all('SELECT id, name FROM profiles');
       const porNome = new Map(existentes.map(p => [p.name, p.id]));
       for (const p of PADRAO) {
@@ -207,6 +207,13 @@ function init() {
           porNome.set(p.name, r.lastInsertRowid);
         }
       }
+      // O acesso sem login usa um perfil de verdade, para a administradora poder
+      // configurar o que o gestor enxerga e faz.
+      if (!porNome.has(GESTOR_PUBLICO.nome)) {
+        await run('INSERT INTO profiles (name, description, scope, permissions, is_system) VALUES (?, ?, ?, ?, 1)',
+          GESTOR_PUBLICO.nome, GESTOR_PUBLICO.descricao, 'all', JSON.stringify(permsGestorPublico()));
+      }
+
       const semPerfil = await all('SELECT id, role FROM users WHERE profile_id IS NULL');
       for (const u of semPerfil) {
         const id = porNome.get(POR_PAPEL[u.role]);

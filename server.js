@@ -108,17 +108,23 @@ async function acessoGestorLiberado() {
   const r = await db.get("SELECT valor FROM settings WHERE chave = 'acesso_gestor'");
   return !r || r.valor !== 'off';   // liberado por padrão
 }
-function usuarioGestorPublico() {
+// As permissões do gestor vêm do perfil "Gestor (sem login)", que a
+// administradora edita. Por segurança, nada que altere dados é aceito aqui,
+// por mais que o perfil seja marcado — quem não se identifica não escreve.
+async function usuarioGestorPublico() {
+  const perfil = await db.get('SELECT * FROM profiles WHERE name = ?', perms.GESTOR_PUBLICO.nome);
+  const config = perfil ? perms.normalizar(perfil.permissions) : perms.permsGestorPublico();
+  for (const k of perms.NEGADAS_SEM_LOGIN) config[k] = false;
   return {
     id: null, name: 'Gestor', email: null, role: 'gestor_publico',
     profile_name: 'Gestor (visualização)', convidado: true,
-    perms: perms.permsGestorPublico(), scope: 'all',
+    perms: config, scope: 'all',
   };
 }
 
 async function currentUser(req) {
   if (req.session && req.session.convidado) {
-    return (await acessoGestorLiberado()) ? usuarioGestorPublico() : null;
+    return (await acessoGestorLiberado()) ? await usuarioGestorPublico() : null;
   }
   if (!req.session || !req.session.userId) return null;
   const user = await db.get(`SELECT u.*, p.name AS profile_name, p.scope AS profile_scope,
@@ -317,9 +323,21 @@ app.delete('/api/avisos/:id', podePublicar, h(async (req, res) => {
 }));
 
 // ---- Configurações ----
+async function estadoConfig() {
+  const gestor = await usuarioGestorPublico();
+  return {
+    acessoGestor: await acessoGestorLiberado(),
+    permsGestor: gestor.perms,
+    // O que não pode ser concedido a quem entra sem se identificar.
+    bloqueadas: perms.NEGADAS_SEM_LOGIN,
+    catalogo: { paineis: perms.PAINEIS, acoes: perms.ACOES },
+  };
+}
+
 app.get('/api/config', requirePerm('config'), h(async (req, res) => {
-  res.json({ acessoGestor: await acessoGestorLiberado() });
+  res.json(await estadoConfig());
 }));
+
 app.put('/api/config', requirePerm('config'), h(async (req, res) => {
   if (req.body.acessoGestor !== undefined) {
     const valor = req.body.acessoGestor ? 'on' : 'off';
@@ -328,7 +346,20 @@ app.put('/api/config', requirePerm('config'), h(async (req, res) => {
     await registrar(req, 'Configuração alterada', {
       detalhe: 'acesso do gestor sem login: ' + (valor === 'on' ? 'liberado' : 'desativado') });
   }
-  res.json({ ok: true, acessoGestor: await acessoGestorLiberado() });
+
+  if (req.body.permsGestor) {
+    const novas = perms.normalizar(req.body.permsGestor);
+    for (const k of perms.NEGADAS_SEM_LOGIN) novas[k] = false;
+    const antes = (await usuarioGestorPublico()).perms;
+    await db.run('UPDATE profiles SET permissions = ? WHERE name = ?',
+      JSON.stringify(novas), perms.GESTOR_PUBLICO.nome);
+    const mudou = perms.TODAS.filter(k => !!antes[k] !== !!novas[k])
+      .map(k => (novas[k] ? '+' : '-') + k);
+    if (mudou.length) {
+      await registrar(req, 'Permissões do gestor alteradas', { detalhe: mudou.join(' ') });
+    }
+  }
+  res.json({ ok: true, ...(await estadoConfig()) });
 }));
 
 // ---- Perfis de acesso ----
@@ -780,6 +811,37 @@ app.post('/api/import', requirePerm('importar'), upload.single('file'), h(async 
     res.status(400).json({ error: 'Falha na importação: ' + e.message });
   }
 }));
+// Gera um PDF a partir da tabela que está na tela. O conteúdo vem do próprio
+// painel de quem pede — já filtrado e já dentro do alcance dele.
+app.post('/api/relatorio/pdf', requirePerm('exportar'), h(async (req, res) => {
+  const { titulo, subtitulo, colunas, linhas } = req.body || {};
+  if (!Array.isArray(colunas) || !colunas.length || !Array.isArray(linhas)) {
+    return res.status(400).json({ error: 'Relatório sem colunas ou sem linhas' });
+  }
+  if (linhas.length > 5000) return res.status(400).json({ error: 'Relatório grande demais; filtre antes de baixar' });
+
+  const cols = colunas.slice(0, 12).map((c, i) => ({
+    nome: String(c.nome || '').slice(0, 40),
+    largura: Number(c.largura) || 10,
+    campo: 'c' + i,
+  }));
+  const dados = linhas.map(l => Object.fromEntries(
+    cols.map((c, i) => [c.campo, l[i] == null ? '' : String(l[i]).slice(0, 300)])));
+
+  const buf = gerarTabelaPDF({
+    titulo: String(titulo || 'Relatório').slice(0, 120) + ' — Riva Stones',
+    subtitulo: String(subtitulo || '').slice(0, 200) +
+      ' · ' + dados.length + ' registro(s) · emitido por ' + (req.user ? req.user.name : ''),
+    colunas: cols,
+    linhas: dados,
+  });
+  const nome = String(titulo || 'Relatorio').replace(/[^\w áéíóúâêôãõçÁÉÍÓÚÂÊÔÃÕÇ-]/g, '').slice(0, 60) +
+    ' ' + todayISO().split('-').reverse().join('_') + '.pdf';
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', 'attachment; filename="' + encodeURIComponent(nome) + '"');
+  res.send(buf);
+}));
+
 app.get('/api/export', requirePerm('exportar'), h(async (req, res) => {
   const buf = await exportWorkbook(await scopeFor(req.user));
   const name = 'Balanço Normativos ' + todayISO().split('-').reverse().join('_') + '.xlsx';

@@ -27,11 +27,12 @@ const ACOES = [
   { chave: 'publicar_avisos', nome: 'Publicar avisos',     desc: 'Criar, editar e retirar os comunicados aos gestores' },
 ];
 
-// Perfil de visualização usado pelo acesso sem login. Só enxerga os painéis de
-// indicadores e os avisos; não exporta nada e não altera nada.
+// Perfil usado pelo acesso sem login. É um perfil de verdade, gravado no banco e
+// editável pela administradora — o que está aqui é apenas o estado inicial.
 const GESTOR_PUBLICO = {
-  nome: 'Gestor',
-  paineis: ['visao', 'vencimentos', 'cargos', 'custo', 'avisos'],
+  nome: 'Gestor (sem login)',
+  descricao: 'Quem entra pelo botão "Acesso do Gestor", sem senha',
+  inicial: ['visao', 'vencimentos', 'cargos', 'custo', 'avisos', 'exportar'],
 };
 
 const TODAS = [...PAINEIS, ...ACOES].map(p => p.chave);
@@ -69,9 +70,15 @@ function normalizar(permissoes) {
   return Object.fromEntries(TODAS.map(k => [k, obj[k] === true]));
 }
 
-// Permissões do acesso sem login: só leitura dos painéis listados.
+// Estado inicial do perfil do gestor, na primeira vez que o sistema sobe.
 function permsGestorPublico() {
-  return Object.fromEntries(TODAS.map(k => [k, GESTOR_PUBLICO.paineis.includes(k)]));
+  return Object.fromEntries(TODAS.map(k => [k, GESTOR_PUBLICO.inicial.includes(k)]));
 }
 
-module.exports = { PAINEIS, ACOES, TODAS, PADRAO, POR_PAPEL, GESTOR_PUBLICO, permsGestorPublico, normalizar };
+// Ações que nunca fazem sentido para quem entra sem se identificar, por mais que
+// o perfil seja editado: alterar dados, gerenciar contas ou apagar registros.
+const NEGADAS_SEM_LOGIN = ['lancamentos', 'colaboradores', 'config', 'usuarios',
+                           'perfis', 'importar', 'excluir', 'publicar_avisos'];
+
+module.exports = { PAINEIS, ACOES, TODAS, PADRAO, POR_PAPEL, GESTOR_PUBLICO,
+                   permsGestorPublico, NEGADAS_SEM_LOGIN, normalizar };

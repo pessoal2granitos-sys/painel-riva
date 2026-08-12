@@ -294,6 +294,9 @@ table.tbl.fixa .badge { padding: 3px 7px; font-size: 10px; max-width: 100%; }
 .checklist { border: 1.5px solid var(--line); border-radius: 10px; max-height: 220px; overflow: auto; padding: 8px 12px; margin-top: 4px; }
 .checklist label { display: flex !important; align-items: center; gap: 8px; margin: 5px 0 !important; text-transform: none !important; font-weight: 400 !important; font-size: 13px !important; color: var(--text) !important; letter-spacing: 0 !important; }
 .checklist input[type=checkbox] { width: auto; accent-color: var(--orange); }
+/* Item de permissão que o servidor nunca concede a quem entra sem login. */
+.perm-item.travada { opacity: .55; }
+.perm-item.travada input { cursor: not-allowed; }
 
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 @media (max-width: 600px) { .row2 { grid-template-columns: 1fr; } }
