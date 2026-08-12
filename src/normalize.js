@@ -15,11 +15,14 @@ function normKey(s) {
 }
 
 // Apelidos conhecidos de treinamentos (variações de escrita na planilha)
+// Apelidos: apenas grafias diferentes do MESMO treinamento. Nunca unir
+// treinamentos que a Matriz de C.H. lista em linhas separadas — "NR-11 PONTE
+// ROLANTE" e "NR-11 PONTE ROLANTE E SIMILARES" são dois treinamentos distintos,
+// com critérios diferentes, e cada cargo usa um deles.
 const TRAINING_ALIASES = {
+  // A Matriz não define "NR-20 ABASTECIMENTO"; é como uma trilha se refere à
+  // NR-20 COMBUSTÍVEIS.
   'NR 20 ABASTECIMENTO': 'NR 20 COMBUSTIVEIS',
-  'NR 11 PONTE ROLANTE': 'NR 11 PONTE ROLANTE E SIMILARES',
-  'NR 12 MAQ E EQUIP ROTATIVAS': 'NR 12 MAQ E EQUIP ROTATIVAS',
-  'NR 12 MAQUINAS PESADAS E CAMINHAO FE': 'NR 12 MAQUINAS PESADAS E CAMINHAO FE',
 };
 
 function trainingKey(name) {
@@ -29,7 +32,6 @@ function trainingKey(name) {
 
 // Nome de exibição preferido quando várias grafias caem na mesma chave.
 const CANONICAL_NAMES = {
-  'NR 11 PONTE ROLANTE E SIMILARES': 'NR-11 PONTE ROLANTE E SIMILARES',
   'NR 20 COMBUSTIVEIS': 'NR-20 COMBUSTÍVEIS',
 };
 function canonicalTrainingName(key) { return CANONICAL_NAMES[key] || null; }

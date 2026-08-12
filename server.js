@@ -392,12 +392,26 @@ app.post('/api/employees', podeColaboradores, h(async (req, res) => {
   } catch { res.status(400).json({ error: 'Colaborador já existe nesta empresa' }); }
 }));
 app.put('/api/employees/:id', podeColaboradores, h(async (req, res) => {
+  const id = Number(req.params.id);
   const b = req.body;
+  const antes = await db.get(`SELECT e.*, c.name AS empresa, g.name AS cargo
+    FROM employees e JOIN companies c ON c.id = e.company_id
+    LEFT JOIN cargos g ON g.id = e.cargo_id WHERE e.id = ?`, id);
   await db.run(`UPDATE employees SET name = COALESCE(?, name), company_id = COALESCE(?, company_id),
     cargo_id = ?, admissao = ?, demissao = ?, active = COALESCE(?, active) WHERE id = ?`,
     b.name ? cleanName(b.name) : null, b.company_id ? Number(b.company_id) : null,
     b.cargo_id ? Number(b.cargo_id) : null, toISODate(b.admissao), toISODate(b.demissao),
-    b.active ?? null, Number(req.params.id));
+    b.active ?? null, id);
+  if (antes) {
+    const depois = await db.get(`SELECT e.*, c.name AS empresa, g.name AS cargo
+      FROM employees e JOIN companies c ON c.id = e.company_id
+      LEFT JOIN cargos g ON g.id = e.cargo_id WHERE e.id = ?`, id);
+    const mudou = [];
+    if (antes.empresa !== depois.empresa) mudou.push('empresa: ' + antes.empresa + ' > ' + depois.empresa);
+    if (antes.cargo !== depois.cargo) mudou.push('cargo: ' + (antes.cargo || '-') + ' > ' + (depois.cargo || '-'));
+    if (antes.demissao !== depois.demissao) mudou.push('demissão: ' + (antes.demissao || '-') + ' > ' + (depois.demissao || '-'));
+    if (mudou.length) await registrar(req, 'Colaborador alterado', { employeeId: id, detalhe: mudou.join(' · ') });
+  }
   res.json({ ok: true });
 }));
 app.delete('/api/employees/:id', podeExcluir, h(async (req, res) => {

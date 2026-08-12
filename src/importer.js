@@ -176,44 +176,8 @@ async function importWorkbook(buffer, options = {}) {
     return c ? reg.employeeByKey.get(c.id + '|' + normKey(nome)) : null;
   };
 
-  if (base) {
-    const escritas = [];
-    const novasExigencias = new Set();
-    const vistos = new Set();
-    for (const r of base.slice(1)) {
-      if (!r || !r[idx.nome] || !r[idx.emp]) continue;
-      const emp = resolveEmp(cleanName(r[idx.emp]), cleanName(r[idx.nome]));
-      const tr = reg.trainingByKey.get(trainingKey(cleanName(r[idx.tre])));
-      if (!emp || !tr) continue;
-
-      // Toda linha da Base de Dados — inclusive as PENDENTE — significa que aquele
-      // treinamento é exigido daquele colaborador.
-      const reqKey = emp.id + '|' + tr.id;
-      if (!reg.requirementKeys.has(reqKey) && !novasExigencias.has(reqKey)) {
-        novasExigencias.add(reqKey);
-        escritas.push(['INSERT OR IGNORE INTO requirements (employee_id, training_id) VALUES (?, ?)', emp.id, tr.id]);
-      }
-
-      const realizacao = idx.real >= 0 ? toISODate(r[idx.real]) : null;
-      const vencimento = idx.venc >= 0 ? toISODate(r[idx.venc]) : null;
-      if (!realizacao && !vencimento) continue; // linha PENDENTE: sem lançamento
-
-      const dupKey = emp.id + '|' + tr.id + '|' + (realizacao || '');
-      if (vistos.has(dupKey)) continue;
-      vistos.add(dupKey);
-
-      const existente = reg.recordByKey.get(dupKey);
-      if (existente) {
-        escritas.push(['UPDATE records SET vencimento = ? WHERE id = ?', vencimento, existente.id]);
-      } else {
-        escritas.push(['INSERT INTO records (employee_id, training_id, realizacao, vencimento) VALUES (?, ?, ?, ?)',
-          emp.id, tr.id, realizacao, vencimento]);
-        stats.lancamentos++;
-      }
-    }
-    // Lotes de 500 para não estourar o limite de uma única requisição.
-    for (let i = 0; i < escritas.length; i += 500) await db.batch(escritas.slice(i, i + 500));
-  }
+  // ----- Matriz de C.H. e Trilha por Cargo vêm ANTES da Base de Dados: a trilha
+  // gravada aqui é a referência que desfaz ambiguidades nos lançamentos. -----
 
   if (matriz) {
     const updates = [];
@@ -281,10 +245,85 @@ async function importWorkbook(buffer, options = {}) {
     for (let i = 0; i < cmds.length; i += 500) await db.batch(cmds.slice(i, i + 500));
   }
 
+  // Vincula cargos com nível ao cargo-base antes de ler a Base de Dados, para a
+  // herança de trilha valer também na desambiguação.
+  stats.cargosVinculados = await linkCargoTrails();
+
+  // Treinamentos que a Matriz lista em separado mas que a Base de Dados às vezes
+  // confunde entre si. Quando a Base cita um e a trilha do cargo exige o outro,
+  // vale a trilha — ela é a definição do que aquele cargo precisa.
+  const PARES_AMBIGUOS = [['NR 11 PONTE ROLANTE', 'NR 11 PONTE ROLANTE E SIMILARES']];
+  const irmaoDe = new Map();
+  for (const [a, b] of PARES_AMBIGUOS) { irmaoDe.set(a, b); irmaoDe.set(b, a); }
+
+  // Trilha efetiva de cada cargo (própria ou herdada do cargo-base).
+  const trilhaDoCargo = new Map();
+  for (const t of await db.all('SELECT cargo_id, training_id FROM trails')) {
+    if (!trilhaDoCargo.has(t.cargo_id)) trilhaDoCargo.set(t.cargo_id, new Set());
+    trilhaDoCargo.get(t.cargo_id).add(t.training_id);
+  }
+  for (const c of await db.all('SELECT id, trail_source_id FROM cargos WHERE trail_source_id IS NOT NULL')) {
+    if (!trilhaDoCargo.has(c.id) && trilhaDoCargo.has(c.trail_source_id)) {
+      trilhaDoCargo.set(c.id, trilhaDoCargo.get(c.trail_source_id));
+    }
+  }
+  function desambiguar(emp, tr) {
+    const irmaoChave = irmaoDe.get(tr.norm_key);
+    if (!irmaoChave || !emp.cargo_id) return tr;
+    const irmao = reg.trainingByKey.get(irmaoChave);
+    if (!irmao) return tr;
+    const trilha = trilhaDoCargo.get(emp.cargo_id) || new Set();
+    // Só troca se a trilha pede o irmão e não pede o que a Base citou.
+    if (trilha.has(irmao.id) && !trilha.has(tr.id)) {
+      stats.variantesAjustadas = (stats.variantesAjustadas || 0) + 1;
+      return irmao;
+    }
+    return tr;
+  }
+
+  if (base) {
+    const escritas = [];
+    const novasExigencias = new Set();
+    const vistos = new Set();
+    for (const r of base.slice(1)) {
+      if (!r || !r[idx.nome] || !r[idx.emp]) continue;
+      const emp = resolveEmp(cleanName(r[idx.emp]), cleanName(r[idx.nome]));
+      let tr = reg.trainingByKey.get(trainingKey(cleanName(r[idx.tre])));
+      if (!emp || !tr) continue;
+      tr = desambiguar(emp, tr);
+
+      // Toda linha da Base de Dados — inclusive as PENDENTE — significa que aquele
+      // treinamento é exigido daquele colaborador.
+      const reqKey = emp.id + '|' + tr.id;
+      if (!reg.requirementKeys.has(reqKey) && !novasExigencias.has(reqKey)) {
+        novasExigencias.add(reqKey);
+        escritas.push(['INSERT OR IGNORE INTO requirements (employee_id, training_id) VALUES (?, ?)', emp.id, tr.id]);
+      }
+
+      const realizacao = idx.real >= 0 ? toISODate(r[idx.real]) : null;
+      const vencimento = idx.venc >= 0 ? toISODate(r[idx.venc]) : null;
+      if (!realizacao && !vencimento) continue; // linha PENDENTE: sem lançamento
+
+      const dupKey = emp.id + '|' + tr.id + '|' + (realizacao || '');
+      if (vistos.has(dupKey)) continue;
+      vistos.add(dupKey);
+
+      const existente = reg.recordByKey.get(dupKey);
+      if (existente) {
+        escritas.push(['UPDATE records SET vencimento = ? WHERE id = ?', vencimento, existente.id]);
+      } else {
+        escritas.push(['INSERT INTO records (employee_id, training_id, realizacao, vencimento) VALUES (?, ?, ?, ?)',
+          emp.id, tr.id, realizacao, vencimento]);
+        stats.lancamentos++;
+      }
+    }
+    // Lotes de 500 para não estourar o limite de uma única requisição.
+    for (let i = 0; i < escritas.length; i += 500) await db.batch(escritas.slice(i, i + 500));
+  }
+
   const totals = await db.all('SELECT (SELECT COUNT(*) FROM companies) empresas, (SELECT COUNT(*) FROM cargos) cargos');
   stats.empresas = totals[0].empresas;
   stats.cargos = totals[0].cargos;
-  stats.cargosVinculados = await linkCargoTrails();
   return stats;
 }
 
