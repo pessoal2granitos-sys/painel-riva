@@ -12,61 +12,103 @@
     <div class="logo-wrap"><img src="/img/logo-vertical.png" alt="Riva Stones"></div>
     <h1>Painel de Treinamentos Normativos</h1>
     <p class="sub">Riva Stones · Mineração Vista Linda · Granriva Granitos · Ágape Distribuição</p>
-    <form id="loginForm">
+
+    <!-- Escolha do tipo de acesso: gestor em destaque, administrador abaixo -->
+    <div id="escolha">
+      <button class="porta porta-gestor" id="btnGestor">
+        <span class="porta-ico">📊</span>
+        <span class="porta-txt">
+          <b>Acesso do Gestor</b>
+          <small>Ver os indicadores agora, sem senha</small>
+        </span>
+        <span class="porta-seta">→</span>
+      </button>
+
+      <div class="ou"><span>ou</span></div>
+
+      <button class="porta porta-admin" id="btnAdmin">
+        <span class="porta-ico">🔒</span>
+        <span class="porta-txt">
+          <b>Painel do Administrador</b>
+          <small>Entrar com e-mail e senha</small>
+        </span>
+        <span class="porta-seta">→</span>
+      </button>
+    </div>
+
+    <!-- Formulário de login, revelado ao escolher o painel do administrador -->
+    <form id="loginForm" style="display:none">
+      <button type="button" class="voltar" id="btnVoltar">← Voltar</button>
       <label for="email">E-mail</label>
       <input type="email" id="email" autocomplete="username" required>
       <label for="password">Senha</label>
       <input type="password" id="password" autocomplete="current-password" required>
       <button class="btn-primary" type="submit">Entrar</button>
-      <div class="login-error" id="err"></div>
     </form>
 
-    <div class="acesso-gestor" id="blocoGestor" style="display:none">
-      <div class="ou"><span>ou</span></div>
-      <button class="btn-gestor" id="btnGestor">
-        <span class="ico">📊</span>
-        <span>
-          <b>Acesso do Gestor</b>
-          <small>ver os indicadores sem precisar de senha</small>
-        </span>
-      </button>
-    </div>
+    <div class="login-error" id="err"></div>
   </div>
+
   <script>
-    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+    const escolha = document.getElementById('escolha');
+    const form = document.getElementById('loginForm');
+    const err = document.getElementById('err');
+    const btnGestor = document.getElementById('btnGestor');
+
+    function mostrarErro(msg) { err.textContent = msg; err.style.display = 'block'; }
+    function limparErro() { err.style.display = 'none'; }
+
+    // Só mostra o botão do gestor se a administradora mantiver o acesso liberado;
+    // do contrário a tela já abre no login, sem uma porta que não leva a lugar nenhum.
+    (async () => {
+      try {
+        const d = await (await fetch('/api/acesso-gestor')).json();
+        if (!d.liberado) abrirLogin({ semVoltar: true });
+      } catch {
+        abrirLogin({ semVoltar: true });   // sem conexão: login é o caminho seguro
+      }
+    })();
+
+    function abrirLogin({ semVoltar = false } = {}) {
+      limparErro();
+      escolha.style.display = 'none';
+      form.style.display = 'block';
+      document.getElementById('btnVoltar').style.display = semVoltar ? 'none' : 'inline-block';
+      setTimeout(() => document.getElementById('email').focus(), 60);
+    }
+
+    document.getElementById('btnAdmin').addEventListener('click', () => abrirLogin());
+
+    document.getElementById('btnVoltar').addEventListener('click', () => {
+      limparErro();
+      form.style.display = 'none';
+      escolha.style.display = 'block';
+    });
+
+    btnGestor.addEventListener('click', async () => {
+      limparErro();
+      btnGestor.disabled = true;
+      btnGestor.querySelector('small').textContent = 'Abrindo os painéis…';
+      try {
+        const res = await fetch('/api/acesso-gestor', { method: 'POST' });
+        if (res.ok) { location.href = '/'; return; }
+        mostrarErro((await res.json().catch(() => ({}))).error || 'Acesso indisponível');
+      } catch {
+        mostrarErro('Não foi possível conectar. Tente novamente.');
+      }
+      btnGestor.disabled = false;
+      btnGestor.querySelector('small').textContent = 'Ver os indicadores agora, sem senha';
+    });
+
+    form.addEventListener('submit', async (e) => {
       e.preventDefault();
-      const err = document.getElementById('err');
-      err.style.display = 'none';
+      limparErro();
       const res = await fetch('/api/login', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: email.value, password: password.value })
       });
-      if (res.ok) { location.href = '/'; }
-      else {
-        const data = await res.json().catch(() => ({}));
-        err.textContent = data.error || 'Falha no login';
-        err.style.display = 'block';
-      }
-    });
-
-    // O botão do gestor só aparece se a administradora mantiver o acesso liberado.
-    (async () => {
-      try {
-        const r = await fetch('/api/acesso-gestor');
-        const d = await r.json();
-        if (d.liberado) document.getElementById('blocoGestor').style.display = 'block';
-      } catch { /* sem conexão: fica só o login */ }
-    })();
-
-    document.getElementById('btnGestor').addEventListener('click', async () => {
-      const btn = document.getElementById('btnGestor');
-      btn.disabled = true;
-      const res = await fetch('/api/acesso-gestor', { method: 'POST' });
       if (res.ok) { location.href = '/'; return; }
-      btn.disabled = false;
-      const err = document.getElementById('err');
-      err.textContent = (await res.json().catch(() => ({}))).error || 'Acesso indisponível';
-      err.style.display = 'block';
+      mostrarErro((await res.json().catch(() => ({}))).error || 'Falha no login');
     });
   </script>
 </body>

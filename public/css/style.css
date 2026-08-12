@@ -54,24 +54,45 @@ input, select, textarea { font-family: inherit; font-size: 13px; }
 .login-card .btn-primary { width: 100%; margin-top: 22px; padding: 12px; font-size: 14.5px; }
 .login-error { display: none; margin-top: 14px; background: #fdecea; color: var(--red); border-radius: 8px; padding: 10px 12px; font-size: 13px; text-align: center; }
 
-/* Entrada do gestor: um clique, sem senha. */
-.acesso-gestor .ou {
-  display: flex; align-items: center; gap: 12px; margin: 22px 0 16px;
-  color: var(--muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: .08em;
+/* Escolha do tipo de acesso: duas portas, o gestor em destaque. */
+.ou {
+  display: flex; align-items: center; gap: 12px; margin: 16px 0;
+  color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .1em;
 }
-.acesso-gestor .ou::before, .acesso-gestor .ou::after {
-  content: ''; flex: 1; height: 1px; background: var(--line);
-}
-.btn-gestor {
+.ou::before, .ou::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+
+.porta {
   width: 100%; display: flex; align-items: center; gap: 14px; text-align: left;
-  background: #fff; border: 2px solid var(--navy); border-radius: 12px; padding: 13px 16px;
-  color: var(--navy); transition: background .15s, border-color .15s;
+  border-radius: 13px; padding: 16px 18px; border: 2px solid transparent;
+  transition: transform .12s, box-shadow .18s, background .18s, border-color .18s;
 }
-.btn-gestor:hover { background: #eef3f8; border-color: var(--orange); }
-.btn-gestor:disabled { opacity: .6; }
-.btn-gestor .ico { font-size: 22px; line-height: 1; }
-.btn-gestor b { display: block; font-size: 14px; }
-.btn-gestor small { display: block; color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+.porta:hover { transform: translateY(-1px); }
+.porta:disabled { opacity: .7; transform: none; }
+.porta-ico { font-size: 24px; line-height: 1; flex: 0 0 auto; }
+.porta-txt { flex: 1; }
+.porta-txt b { display: block; font-size: 15px; line-height: 1.2; }
+.porta-txt small { display: block; font-size: 11.5px; margin-top: 3px; opacity: .85; }
+.porta-seta { font-size: 17px; opacity: .55; transition: transform .18s, opacity .18s; }
+.porta:hover .porta-seta { transform: translateX(3px); opacity: 1; }
+
+/* Gestor: caminho principal, nas cores da marca. */
+.porta-gestor {
+  background: linear-gradient(180deg, var(--orange), var(--orange-dark));
+  color: #fff; box-shadow: 0 4px 14px rgba(217, 111, 30, .38);
+}
+.porta-gestor:hover { box-shadow: 0 7px 20px rgba(217, 111, 30, .46); }
+
+/* Administrador: caminho secundário, discreto. */
+.porta-admin { background: #fff; border-color: var(--line); color: var(--navy); }
+.porta-admin:hover { border-color: var(--navy); background: #f6f9fc; }
+.porta-admin small { color: var(--muted); }
+
+/* Voltar para a escolha, dentro do formulário. */
+.voltar {
+  background: none; border: none; color: var(--muted); font-size: 12.5px; font-weight: 600;
+  padding: 0; margin-bottom: 6px;
+}
+.voltar:hover { color: var(--orange); }
 
 /* ---------- Botões ---------- */
 .btn-primary {
