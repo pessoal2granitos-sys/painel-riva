@@ -151,6 +151,24 @@ CREATE TABLE IF NOT EXISTS activity_log (
   detalhe TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_log_quando ON activity_log(quando DESC);
+-- Configurações gerais do sistema, em pares chave/valor.
+CREATE TABLE IF NOT EXISTS settings (
+  chave TEXT PRIMARY KEY,
+  valor TEXT
+);
+-- Comunicados que a administração publica para os gestores.
+CREATE TABLE IF NOT EXISTS avisos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  titulo TEXT NOT NULL,
+  texto TEXT NOT NULL,
+  prioridade TEXT NOT NULL DEFAULT 'normal' CHECK (prioridade IN ('normal','importante','urgente')),
+  ativo INTEGER NOT NULL DEFAULT 1,
+  fixado INTEGER NOT NULL DEFAULT 0,
+  autor TEXT,
+  criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+  atualizado_em TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_avisos_ordem ON avisos(ativo, fixado DESC, criado_em DESC);
 -- Perfis de acesso: definem quais painéis e ações cada usuário enxerga.
 CREATE TABLE IF NOT EXISTS profiles (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -195,15 +213,26 @@ function init() {
         if (id) await run('UPDATE users SET profile_id = ? WHERE id = ?', id, u.id);
       }
 
-      // Permissões criadas depois que perfis já existiam: quem enxerga
-      // Vencimentos passa a enxergar também o painel de Pendências.
+      // Permissões criadas depois que perfis já existiam recebem um padrão
+      // sensato, para nenhum perfil ficar com acesso indefinido.
       for (const p of await all('SELECT id, name, permissions FROM profiles')) {
         let perm;
         try { perm = JSON.parse(p.permissions || '{}'); } catch { perm = {}; }
+        const admin = p.name === 'Administradora';
+        let mudou = false;
         if (perm.pendencias === undefined) {
-          perm.pendencias = p.name === 'Administradora' ? true : !!perm.vencimentos;
-          await run('UPDATE profiles SET permissions = ? WHERE id = ?', JSON.stringify(perm), p.id);
+          perm.pendencias = admin ? true : !!perm.vencimentos;
+          mudou = true;
         }
+        if (perm.avisos === undefined) {          // ler comunicados: todos
+          perm.avisos = true;
+          mudou = true;
+        }
+        if (perm.publicar_avisos === undefined) { // publicar: quem já configura
+          perm.publicar_avisos = admin ? true : !!perm.config;
+          mudou = true;
+        }
+        if (mudou) await run('UPDATE profiles SET permissions = ? WHERE id = ?', JSON.stringify(perm), p.id);
       }
     })();
   }

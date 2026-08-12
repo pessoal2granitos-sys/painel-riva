@@ -101,7 +101,25 @@ app.use(h(async (req, res, next) => { await ensureReady(); next(); }));
 // O usuário carrega o perfil junto. As permissões vêm do perfil, exceto para a
 // administradora original, que mantém acesso total mesmo que o perfil seja alterado
 // — assim não há como o sistema ficar sem ninguém capaz de administrá-lo.
+// ---- Acesso do gestor, sem login ----
+// Um clique na tela de entrada abre uma sessão somente-leitura, limitada aos
+// painéis de indicadores e aos avisos. Pode ser desligado pela administradora.
+async function acessoGestorLiberado() {
+  const r = await db.get("SELECT valor FROM settings WHERE chave = 'acesso_gestor'");
+  return !r || r.valor !== 'off';   // liberado por padrão
+}
+function usuarioGestorPublico() {
+  return {
+    id: null, name: 'Gestor', email: null, role: 'gestor_publico',
+    profile_name: 'Gestor (visualização)', convidado: true,
+    perms: perms.permsGestorPublico(), scope: 'all',
+  };
+}
+
 async function currentUser(req) {
+  if (req.session && req.session.convidado) {
+    return (await acessoGestorLiberado()) ? usuarioGestorPublico() : null;
+  }
   if (!req.session || !req.session.userId) return null;
   const user = await db.get(`SELECT u.*, p.name AS profile_name, p.scope AS profile_scope,
       p.permissions AS profile_permissions
@@ -120,6 +138,16 @@ const requireAuth = h(async (req, res, next) => {
   req.user = user;
   next();
 });
+// Rotas que o acesso sem login não deve alcançar, mesmo sendo de leitura:
+// detalhe individual de colaborador e qualquer coisa ligada à conta.
+const semConvidado = h(async (req, res, next) => {
+  const user = await currentUser(req);
+  if (!user) return res.status(401).json({ error: 'Não autenticado' });
+  if (user.convidado) return res.status(403).json({ error: 'Disponível apenas para usuários com login' });
+  req.user = user;
+  next();
+});
+
 // Exige uma permissão. Aceita várias chaves: basta ter uma delas.
 function requirePerm(...chaves) {
   return h(async (req, res, next) => {
@@ -172,6 +200,18 @@ app.post('/api/login', h(async (req, res) => {
   res.json({ ok: true, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
 }));
 
+// Entrada do gestor: um clique, sem credenciais.
+app.get('/api/acesso-gestor', h(async (req, res) => {
+  res.json({ liberado: await acessoGestorLiberado() });
+}));
+app.post('/api/acesso-gestor', h(async (req, res) => {
+  if (!await acessoGestorLiberado()) {
+    return res.status(403).json({ error: 'O acesso de visualização está desativado. Use seu login.' });
+  }
+  req.session = { convidado: true };
+  res.json({ ok: true });
+}));
+
 app.post('/api/logout', (req, res) => { req.session = null; res.json({ ok: true }); });
 
 app.get('/api/me', requireAuth, (req, res) => {
@@ -179,7 +219,7 @@ app.get('/api/me', requireAuth, (req, res) => {
   res.json({ id: u.id, name: u.name, email: u.email, role: u.role });
 });
 
-app.post('/api/me/password', requireAuth, h(async (req, res) => {
+app.post('/api/me/password', semConvidado, h(async (req, res) => {
   const { current, next } = req.body || {};
   if (!bcrypt.compareSync(String(current || ''), req.user.password_hash)) {
     return res.status(400).json({ error: 'Senha atual incorreta' });
@@ -209,6 +249,7 @@ app.get('/api/dataset', requireAuth, h(async (req, res) => {
     id: req.user.id, name: req.user.name, role: req.user.role,
     profile: req.user.profile_name || null,
     perms: req.user.perms, scope: req.user.scope,
+    convidado: !!req.user.convidado,
   };
   res.json(ds);
 }));
@@ -225,6 +266,69 @@ app.get('/api/status', requireAuth, h(async (req, res) => {
     ultimoLancamento: r.ultimo || null,
     assinatura: [r.ultimo || '', r.lancamentos, r.colaboradores, r.exigencias].join('|'),
   });
+}));
+
+// ---- Avisos aos gestores ----
+const podePublicar = requirePerm('publicar_avisos');
+
+app.get('/api/avisos', requirePerm('avisos'), h(async (req, res) => {
+  // Quem publica enxerga também os comunicados retirados do ar.
+  const todos = req.user.perms.publicar_avisos;
+  const linhas = await db.all(
+    'SELECT * FROM avisos' + (todos ? '' : ' WHERE ativo = 1') +
+    ' ORDER BY fixado DESC, criado_em DESC');
+  res.json({ avisos: linhas, podePublicar: !!todos });
+}));
+
+app.post('/api/avisos', podePublicar, h(async (req, res) => {
+  const titulo = cleanName(req.body.titulo);
+  const texto = String(req.body.texto || '').trim();
+  if (!titulo || !texto) return res.status(400).json({ error: 'Preencha o título e o texto do comunicado' });
+  const prioridade = ['normal', 'importante', 'urgente'].includes(req.body.prioridade) ? req.body.prioridade : 'normal';
+  const r = await db.run(`INSERT INTO avisos (titulo, texto, prioridade, ativo, fixado, autor)
+    VALUES (?, ?, ?, ?, ?, ?)`,
+    titulo, texto, prioridade, req.body.ativo === false ? 0 : 1, req.body.fixado ? 1 : 0, req.user.name);
+  await registrar(req, 'Aviso publicado', { detalhe: titulo });
+  res.json({ ok: true, id: r.lastInsertRowid });
+}));
+
+app.put('/api/avisos/:id', podePublicar, h(async (req, res) => {
+  const id = Number(req.params.id);
+  const antes = await db.get('SELECT * FROM avisos WHERE id = ?', id);
+  if (!antes) return res.status(404).json({ error: 'Aviso não encontrado' });
+  const prioridade = ['normal', 'importante', 'urgente'].includes(req.body.prioridade) ? req.body.prioridade : null;
+  await db.run(`UPDATE avisos SET titulo = COALESCE(?, titulo), texto = COALESCE(?, texto),
+    prioridade = COALESCE(?, prioridade), ativo = COALESCE(?, ativo), fixado = COALESCE(?, fixado),
+    atualizado_em = datetime('now') WHERE id = ?`,
+    req.body.titulo ? cleanName(req.body.titulo) : null,
+    req.body.texto !== undefined ? String(req.body.texto).trim() : null,
+    prioridade,
+    req.body.ativo === undefined ? null : (req.body.ativo ? 1 : 0),
+    req.body.fixado === undefined ? null : (req.body.fixado ? 1 : 0), id);
+  await registrar(req, 'Aviso alterado', { detalhe: antes.titulo });
+  res.json({ ok: true });
+}));
+
+app.delete('/api/avisos/:id', podePublicar, h(async (req, res) => {
+  const antes = await db.get('SELECT titulo FROM avisos WHERE id = ?', Number(req.params.id));
+  await db.run('DELETE FROM avisos WHERE id = ?', Number(req.params.id));
+  if (antes) await registrar(req, 'Aviso excluído', { detalhe: antes.titulo });
+  res.json({ ok: true });
+}));
+
+// ---- Configurações ----
+app.get('/api/config', requirePerm('config'), h(async (req, res) => {
+  res.json({ acessoGestor: await acessoGestorLiberado() });
+}));
+app.put('/api/config', requirePerm('config'), h(async (req, res) => {
+  if (req.body.acessoGestor !== undefined) {
+    const valor = req.body.acessoGestor ? 'on' : 'off';
+    await db.run(`INSERT INTO settings (chave, valor) VALUES ('acesso_gestor', ?)
+      ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor`, valor);
+    await registrar(req, 'Configuração alterada', {
+      detalhe: 'acesso do gestor sem login: ' + (valor === 'on' ? 'liberado' : 'desativado') });
+  }
+  res.json({ ok: true, acessoGestor: await acessoGestorLiberado() });
 }));
 
 // ---- Perfis de acesso ----
@@ -495,7 +599,7 @@ app.delete('/api/historico', requirePerm('excluir'), h(async (req, res) => {
 }));
 
 // ---- Lançamentos de treinamento ----
-app.get('/api/records/:employeeId', requireAuth, h(async (req, res) => {
+app.get('/api/records/:employeeId', semConvidado, h(async (req, res) => {
   if (!await employeeInScope(req.user, req.params.employeeId)) {
     return res.status(403).json({ error: 'Este colaborador não faz parte da sua equipe' });
   }
@@ -551,7 +655,7 @@ app.delete('/api/records/:id', podeLancar, h(async (req, res) => {
 }));
 
 // ---- Exigências individuais ----
-app.get('/api/requirements/:employeeId', requireAuth, h(async (req, res) => {
+app.get('/api/requirements/:employeeId', semConvidado, h(async (req, res) => {
   if (!await employeeInScope(req.user, req.params.employeeId)) {
     return res.status(403).json({ error: 'Este colaborador não faz parte da sua equipe' });
   }
@@ -688,7 +792,9 @@ app.get('/api/export', requirePerm('exportar'), h(async (req, res) => {
 app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 app.get('/login', (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
 app.get('/', (req, res) => {
-  if (!req.session || !req.session.userId) return res.redirect('/login');
+  // Vale tanto para quem entrou com login quanto para o acesso do gestor.
+  const temSessao = req.session && (req.session.userId || req.session.convidado);
+  if (!temSessao) return res.redirect('/login');
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 

@@ -20,6 +20,17 @@
       <button class="btn-primary" type="submit">Entrar</button>
       <div class="login-error" id="err"></div>
     </form>
+
+    <div class="acesso-gestor" id="blocoGestor" style="display:none">
+      <div class="ou"><span>ou</span></div>
+      <button class="btn-gestor" id="btnGestor">
+        <span class="ico">📊</span>
+        <span>
+          <b>Acesso do Gestor</b>
+          <small>ver os indicadores sem precisar de senha</small>
+        </span>
+      </button>
+    </div>
   </div>
   <script>
     document.getElementById('loginForm').addEventListener('submit', async (e) => {
@@ -36,6 +47,26 @@
         err.textContent = data.error || 'Falha no login';
         err.style.display = 'block';
       }
+    });
+
+    // O botão do gestor só aparece se a administradora mantiver o acesso liberado.
+    (async () => {
+      try {
+        const r = await fetch('/api/acesso-gestor');
+        const d = await r.json();
+        if (d.liberado) document.getElementById('blocoGestor').style.display = 'block';
+      } catch { /* sem conexão: fica só o login */ }
+    })();
+
+    document.getElementById('btnGestor').addEventListener('click', async () => {
+      const btn = document.getElementById('btnGestor');
+      btn.disabled = true;
+      const res = await fetch('/api/acesso-gestor', { method: 'POST' });
+      if (res.ok) { location.href = '/'; return; }
+      btn.disabled = false;
+      const err = document.getElementById('err');
+      err.textContent = (await res.json().catch(() => ({}))).error || 'Acesso indisponível';
+      err.style.display = 'block';
     });
   </script>
 </body>

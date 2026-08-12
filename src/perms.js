@@ -11,6 +11,7 @@ const PAINEIS = [
   { chave: 'cargos',       nome: 'Cargos e Empresas',      desc: 'Aderência por cargo e matriz empresa × cargo' },
   { chave: 'custo',        nome: 'Carga Horária e Custo',  desc: 'Horas e custo estimado para regularizar' },
   { chave: 'qualidade',    nome: 'Qualidade dos Dados',    desc: 'Inconsistências e lacunas de cadastro' },
+  { chave: 'avisos',       nome: 'Avisos',                 desc: 'Comunicados publicados pela administração' },
 ];
 
 // Ações administrativas.
@@ -23,7 +24,15 @@ const ACOES = [
   { chave: 'importar',      nome: 'Importar planilha',     desc: 'Carregar dados a partir do arquivo Excel' },
   { chave: 'exportar',      nome: 'Exportar planilha',     desc: 'Baixar o relatório em Excel' },
   { chave: 'excluir',       nome: 'Excluir definitivamente', desc: 'Apagar colaboradores, empresas, cargos e treinamentos' },
+  { chave: 'publicar_avisos', nome: 'Publicar avisos',     desc: 'Criar, editar e retirar os comunicados aos gestores' },
 ];
+
+// Perfil de visualização usado pelo acesso sem login. Só enxerga os painéis de
+// indicadores e os avisos; não exporta nada e não altera nada.
+const GESTOR_PUBLICO = {
+  nome: 'Gestor',
+  paineis: ['visao', 'vencimentos', 'cargos', 'custo', 'avisos'],
+};
 
 const TODAS = [...PAINEIS, ...ACOES].map(p => p.chave);
 
@@ -60,4 +69,9 @@ function normalizar(permissoes) {
   return Object.fromEntries(TODAS.map(k => [k, obj[k] === true]));
 }
 
-module.exports = { PAINEIS, ACOES, TODAS, PADRAO, POR_PAPEL, normalizar };
+// Permissões do acesso sem login: só leitura dos painéis listados.
+function permsGestorPublico() {
+  return Object.fromEntries(TODAS.map(k => [k, GESTOR_PUBLICO.paineis.includes(k)]));
+}
+
+module.exports = { PAINEIS, ACOES, TODAS, PADRAO, POR_PAPEL, GESTOR_PUBLICO, permsGestorPublico, normalizar };

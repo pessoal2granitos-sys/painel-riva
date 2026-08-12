@@ -71,6 +71,7 @@ async function loadAll() {
   renderHeader();
   fillFilters();
   renderTab();
+  contarAvisosNovos();
   // Registra o estado recém-carregado como referência para a próxima verificação.
   try {
     const st = await (await fetch('/api/status')).json();
@@ -102,7 +103,11 @@ function renderHeader() {
     (ultimo ? ' &nbsp;|&nbsp; Último lançamento: <b>' + esc(ultimo) + '</b>' : '');
   $('userName').textContent = ME.name;
   $('userRole').textContent = ME.profile || ROLE_LABEL[ME.role] || ME.role;
-  $('userAvatar').textContent = ME.name.trim().split(/\s+/).map(p => p[0]).slice(0, 2).join('').toUpperCase();
+  $('userAvatar').textContent = ME.convidado ? '👁'
+    : ME.name.trim().split(/\s+/).map(p => p[0]).slice(0, 2).join('').toUpperCase();
+  // Visitante não tem conta: nada de trocar senha, e "Sair" vira "Entrar".
+  $('btnMyPassword').style.display = ME.convidado ? 'none' : '';
+  $('btnLogout').textContent = ME.convidado ? 'Entrar' : 'Sair';
 
   // Cada aba aparece só se o perfil permitir. O servidor aplica as mesmas regras,
   // então esconder aqui é conveniência, não a proteção em si.
@@ -252,9 +257,9 @@ function renderTab() {
   const alvo = $('tab-' + currentTab);
   if (!alvo) return;
   alvo.style.display = '';
-  const render = { visao: renderVisao, vencimentos: renderVencimentos, pendencias: renderPendencias,
-                   cargos: renderCargos, custo: renderCusto, qualidade: renderQualidade,
-                   admin: renderAdmin }[currentTab];
+  const render = { avisos: renderAvisos, visao: renderVisao, vencimentos: renderVencimentos,
+                   pendencias: renderPendencias, cargos: renderCargos, custo: renderCusto,
+                   qualidade: renderQualidade, admin: renderAdmin }[currentTab];
   if (render) render();
 }
 
@@ -510,6 +515,122 @@ function renderVencimentos() {
     plugins: [barValueLabels]
   });
 }
+
+// ===== Avisos =====
+// Comunicados que a administração publica para os gestores. Quem tem permissão
+// de publicar enxerga também os que estão fora do ar.
+let AVISOS = [];
+const PRIORIDADES = {
+  urgente:    { rotulo: 'Urgente',    cor: 'var(--red)',    fundo: '#fde7e4' },
+  importante: { rotulo: 'Importante', cor: '#b17a17',       fundo: '#fcf0da' },
+  normal:     { rotulo: 'Informativo', cor: 'var(--navy)',  fundo: '#e8eef5' },
+};
+
+function dataAviso(a) {
+  const q = dataHoraLocal(a.atualizado_em || a.criado_em);
+  return (a.atualizado_em ? 'atualizado em ' : 'publicado em ') + (q || '');
+}
+
+async function renderAvisos() {
+  const dados = await api('/api/avisos');
+  AVISOS = dados.avisos;
+  const publica = dados.podePublicar;
+  const ativos = AVISOS.filter(a => a.ativo);
+
+  const cartao = (a) => {
+    const p = PRIORIDADES[a.prioridade] || PRIORIDADES.normal;
+    return `<div class="aviso ${a.ativo ? '' : 'inativo'}" style="border-left-color:${p.cor}">
+      <div class="aviso-topo">
+        <span class="aviso-tag" style="background:${p.fundo};color:${p.cor}">${p.rotulo}</span>
+        ${a.fixado ? '<span class="aviso-tag" style="background:#e8eef5;color:var(--navy)">📌 Fixado</span>' : ''}
+        ${a.ativo ? '' : '<span class="aviso-tag" style="background:#eceff3;color:var(--muted)">Fora do ar</span>'}
+        <div style="flex:1"></div>
+        ${publica ? `<button class="btn-mini" onclick="editarAviso(${a.id})">Editar</button>
+                     <button class="btn-mini danger" onclick="excluirAviso(${a.id})">Excluir</button>` : ''}
+      </div>
+      <h3 class="aviso-titulo">${esc(a.titulo)}</h3>
+      <div class="aviso-texto">${esc(a.texto)}</div>
+      <div class="aviso-rodape">${esc(dataAviso(a))}${a.autor ? ' · por ' + esc(a.autor) : ''}</div>
+    </div>`;
+  };
+
+  $('tab-avisos').innerHTML = `
+    <div class="admin-head">
+      <h2>📣 Avisos e Comunicados</h2>
+      <span class="hint">${publica
+        ? 'Publicados aqui, ficam visíveis para todos os gestores.'
+        : 'Comunicados da administração.'}</span>
+      ${publica ? '<button class="btn-primary" onclick="editarAviso(null)">+ Novo comunicado</button>' : ''}
+    </div>
+    ${ativos.length || (publica && AVISOS.length)
+      ? `<div class="avisos-lista">${AVISOS.map(cartao).join('')}</div>`
+      : `<div class="card"><div class="empty">Nenhum comunicado publicado no momento.</div></div>`}`;
+
+  marcarAvisosLidos(ativos);
+}
+
+// Destaca no menu quantos comunicados o usuário ainda não abriu.
+function contarAvisosNovos() {
+  if (!DS || !pode('avisos')) return;
+  fetch('/api/avisos').then(r => r.ok ? r.json() : null).then(d => {
+    if (!d) return;
+    const vistos = JSON.parse(localStorage.getItem('avisosVistos') || '[]');
+    const novos = d.avisos.filter(a => a.ativo && !vistos.includes(a.id)).length;
+    const selo = $('badgeAvisos');
+    if (!selo) return;
+    selo.style.display = novos ? '' : 'none';
+    selo.textContent = novos;
+  }).catch(() => {});
+}
+function marcarAvisosLidos(ativos) {
+  localStorage.setItem('avisosVistos', JSON.stringify(ativos.map(a => a.id)));
+  const selo = $('badgeAvisos');
+  if (selo) selo.style.display = 'none';
+}
+
+window.editarAviso = (id) => {
+  const a = id ? AVISOS.find(x => x.id === id) : null;
+  openModal(a ? 'Editar comunicado' : 'Novo comunicado', `
+    <label>Título</label>
+    <input id="mTitulo" value="${esc(a?.titulo || '')}" placeholder="ex.: Turma de NR-35 em setembro">
+    <label>Texto do comunicado</label>
+    <textarea id="mTexto" rows="7" placeholder="Escreva aqui a mensagem que os gestores vão ler.">${esc(a?.texto || '')}</textarea>
+    <div class="row2">
+      <div><label>Prioridade</label>
+        <select id="mPrioridade">
+          <option value="normal" ${!a || a.prioridade === 'normal' ? 'selected' : ''}>Informativo</option>
+          <option value="importante" ${a && a.prioridade === 'importante' ? 'selected' : ''}>Importante</option>
+          <option value="urgente" ${a && a.prioridade === 'urgente' ? 'selected' : ''}>Urgente</option>
+        </select></div>
+      <div><label>Exibição</label>
+        <select id="mAtivo">
+          <option value="1" ${!a || a.ativo ? 'selected' : ''}>Visível aos gestores</option>
+          <option value="0" ${a && !a.ativo ? 'selected' : ''}>Fora do ar (rascunho)</option>
+        </select></div>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0">
+      <input type="checkbox" id="mFixado" style="width:auto;accent-color:var(--orange)" ${a && a.fixado ? 'checked' : ''}>
+      Fixar no topo da lista
+    </label>`,
+    [{ label: 'Publicar', cls: 'btn-primary', onClick: async () => {
+      const body = {
+        titulo: $('mTitulo').value, texto: $('mTexto').value,
+        prioridade: $('mPrioridade').value,
+        ativo: $('mAtivo').value === '1', fixado: $('mFixado').checked,
+      };
+      if (!body.titulo.trim() || !body.texto.trim()) return toast('Preencha título e texto', true);
+      if (a) await api('/api/avisos/' + a.id, { method: 'PUT', body: JSON.stringify(body) });
+      else await api('/api/avisos', { method: 'POST', body: JSON.stringify(body) });
+      closeModal(); toast('Comunicado salvo'); renderAvisos();
+    } }], 'media');
+};
+
+window.excluirAviso = async (id) => {
+  const a = AVISOS.find(x => x.id === id);
+  if (!await confirmar('Excluir o comunicado "' + a.titulo + '"?\n\nPara apenas tirá-lo do ar sem apagar, use Editar e mude a exibição para rascunho.', 'Excluir comunicado')) return;
+  await api('/api/avisos/' + id, { method: 'DELETE' });
+  toast('Comunicado excluído'); renderAvisos();
+};
 
 // ===== Pendências e Pontos de Atenção =====
 // Reúne, num só lugar, tudo que precisa de ação: treinamentos em aberto e
@@ -1053,7 +1174,53 @@ const SECOES_ADMIN = [
   { id: 'perfis',        nome: 'Perfis de Acesso',    perm: 'perfis',        render: () => renderPerfis() },
   { id: 'usuarios',      nome: 'Usuários',            perm: 'usuarios',      render: () => renderUsuarios() },
   { id: 'dados',         nome: 'Importar / Exportar', perm: 'importar',      render: () => renderImportar() },
+  { id: 'acesso',        nome: 'Acesso dos Gestores', perm: 'config',        render: () => renderConfigAcesso() },
 ];
+
+// Liga ou desliga a entrada sem login e mostra o endereço a divulgar.
+async function renderConfigAcesso() {
+  const cfg = await api('/api/config');
+  const endereco = location.origin;
+  $('cadContent').innerHTML = `
+    <div class="grid cols-2">
+      <div class="card">
+        <h3>Acesso do gestor sem login</h3>
+        <p class="hint">Com isso ligado, a tela de entrada mostra o botão <b>Acesso do Gestor</b>.
+        Quem clicar vê os painéis Visão Geral, Vencimentos, Cargos e Empresas, Carga Horária e Custo,
+        além dos Avisos — sem digitar senha.</p>
+        <label style="display:flex;align-items:center;gap:10px;margin:16px 0;font-size:14px">
+          <input type="checkbox" id="cfgAcesso" ${cfg.acessoGestor ? 'checked' : ''}
+                 style="width:auto;accent-color:var(--orange);transform:scale(1.3)">
+          <b>${cfg.acessoGestor ? 'Liberado' : 'Desativado'}</b>
+        </label>
+        <p class="hint"><b>O que o gestor não consegue fazer:</b> baixar planilhas ou PDF, abrir a ficha
+        individual de um colaborador, ver as abas de Pendências e Qualidade, nem entrar na Administração.
+        Tudo isso é bloqueado no servidor, não só escondido na tela.</p>
+      </div>
+      <div class="card">
+        <h3>Endereço para divulgar</h3>
+        <p class="hint">Envie este link aos gestores. Eles abrem, clicam em <b>Acesso do Gestor</b> e pronto.</p>
+        <div style="display:flex;gap:8px;margin:14px 0">
+          <input id="cfgUrl" readonly value="${esc(endereco)}"
+                 style="flex:1;padding:10px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:14px">
+          <button class="btn-navy" id="btnCopiar">Copiar</button>
+        </div>
+        <p class="hint" style="color:var(--amber)"><b>Atenção:</b> com o acesso liberado, qualquer pessoa
+        que tenha o endereço vê nomes, cargos e situação de treinamento dos colaboradores, sem senha.
+        Divulgue apenas internamente e desative aqui se precisar fechar.</p>
+      </div>
+    </div>`;
+
+  $('cfgAcesso').addEventListener('change', async (e) => {
+    const r = await api('/api/config', { method: 'PUT', body: JSON.stringify({ acessoGestor: e.target.checked }) });
+    toast(r.acessoGestor ? 'Acesso do gestor liberado' : 'Acesso do gestor desativado');
+    renderConfigAcesso();
+  });
+  $('btnCopiar').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(endereco); toast('Endereço copiado'); }
+    catch { $('cfgUrl').select(); toast('Selecione e copie com Ctrl+C', true); }
+  });
+}
 
 function renderAdmin() {
   const disponiveis = SECOES_ADMIN.filter(s => !s.perm || pode(s.perm));
