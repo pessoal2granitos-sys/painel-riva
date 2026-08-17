@@ -10,6 +10,7 @@ const PAINEIS = [
   { chave: 'pendencias',   nome: 'Pendências e Atenção',   desc: 'Lista de tudo que precisa de ação, com exportação em Excel' },
   { chave: 'cargos',       nome: 'Cargos e Empresas',      desc: 'Aderência por cargo e matriz empresa × cargo' },
   { chave: 'custo',        nome: 'Carga Horária e Custo',  desc: 'Horas e custo estimado para regularizar' },
+  { chave: 'realizados',   nome: 'Treinamentos Realizados', desc: 'Quem foi treinado em cada mês, com horas e turmas' },
   { chave: 'qualidade',    nome: 'Qualidade dos Dados',    desc: 'Inconsistências e lacunas de cadastro' },
   { chave: 'avisos',       nome: 'Avisos',                 desc: 'Comunicados publicados pela administração' },
 ];
@@ -32,7 +33,7 @@ const ACOES = [
 const GESTOR_PUBLICO = {
   nome: 'Gestor (sem login)',
   descricao: 'Quem entra pelo botão "Acesso do Gestor", sem senha',
-  inicial: ['visao', 'vencimentos', 'cargos', 'custo', 'avisos', 'exportar'],
+  inicial: ['visao', 'vencimentos', 'realizados', 'cargos', 'custo', 'avisos', 'exportar'],
 };
 
 const TODAS = [...PAINEIS, ...ACOES].map(p => p.chave);

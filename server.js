@@ -31,6 +31,26 @@ app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'same-origin');
+  // O painel tem dados de pessoas: não deve ser indexado por buscador nenhum.
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
+  // Tudo que a página usa (scripts, estilos, imagens, chamadas) vem do próprio
+  // site — nenhuma biblioteca de CDN. Então dá para trancar a origem: mesmo que
+  // um texto malicioso entrasse por um comunicado ou por uma planilha importada,
+  // ele não conseguiria carregar código de fora nem mandar a base de
+  // colaboradores para outro servidor. O 'unsafe-inline' é necessário porque os
+  // botões do painel usam onclick e estilos embutidos.
+  res.setHeader('Content-Security-Policy', [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "font-src 'self'",
+    "connect-src 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "object-src 'none'",
+  ].join('; '));
   if (BEHIND_PROXY) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   // Indicadores nunca podem vir de cache: um lançamento tem que aparecer na
   // consulta seguinte, mesmo com CDN na frente.
@@ -169,39 +189,46 @@ function requirePerm(...chaves) {
 
 // Bloqueia tentativas repetidas de adivinhar senha: 8 falhas em 15 minutos,
 // contadas por IP + e-mail, travam novas tentativas por 15 minutos.
+// O contador vive no banco porque em hospedagem serverless as requisições se
+// espalham por várias instâncias — em memória, cada uma começaria a contar do
+// zero e o atacante ganharia 8 tentativas por instância.
 const LOGIN_MAX_FAILS = 8;
-const LOGIN_WINDOW_MS = 15 * 60 * 1000;
-const loginFails = new Map();
+const LOGIN_WINDOW_MIN = 15;
 
 const loginKey = (req, email) => (req.ip || 'sem-ip') + '|' + String(email || '').trim().toLowerCase();
-function isLocked(key) {
-  const entry = loginFails.get(key);
-  if (!entry) return false;
-  if (Date.now() - entry.first > LOGIN_WINDOW_MS) { loginFails.delete(key); return false; }
-  return entry.count >= LOGIN_MAX_FAILS;
+
+async function isLocked(key) {
+  const r = await db.get(`SELECT tentativas FROM login_fails
+    WHERE chave = ? AND primeira > datetime('now', ?)`, key, '-' + LOGIN_WINDOW_MIN + ' minutes');
+  return !!r && r.tentativas >= LOGIN_MAX_FAILS;
 }
-function registerFail(key) {
-  const entry = loginFails.get(key);
-  if (!entry || Date.now() - entry.first > LOGIN_WINDOW_MS) loginFails.set(key, { count: 1, first: Date.now() });
-  else entry.count++;
-  if (loginFails.size > 5000) {
-    const cutoff = Date.now() - LOGIN_WINDOW_MS;
-    for (const [k, v] of loginFails) if (v.first < cutoff) loginFails.delete(k);
+
+async function registerFail(key) {
+  // Janela expirada recomeça a contagem; dentro da janela, incrementa.
+  await db.run(`INSERT INTO login_fails (chave, tentativas) VALUES (?, 1)
+    ON CONFLICT(chave) DO UPDATE SET
+      tentativas = CASE WHEN primeira > datetime('now', ?) THEN tentativas + 1 ELSE 1 END,
+      primeira   = CASE WHEN primeira > datetime('now', ?) THEN primeira ELSE datetime('now') END`,
+    key, '-' + LOGIN_WINDOW_MIN + ' minutes', '-' + LOGIN_WINDOW_MIN + ' minutes');
+  // Limpeza oportunista, para a tabela não crescer sem limite.
+  if (Math.random() < 0.05) {
+    await db.run("DELETE FROM login_fails WHERE primeira < datetime('now', '-1 day')");
   }
 }
+const clearFails = (key) => db.run('DELETE FROM login_fails WHERE chave = ?', key);
 
 app.post('/api/login', h(async (req, res) => {
   const { email, password } = req.body || {};
   const key = loginKey(req, email);
-  if (isLocked(key)) {
+  if (await isLocked(key)) {
     return res.status(429).json({ error: 'Muitas tentativas de acesso. Aguarde 15 minutos e tente novamente.' });
   }
   const user = await db.get('SELECT * FROM users WHERE email = ? AND active = 1', String(email || '').trim());
   if (!user || !bcrypt.compareSync(String(password || ''), user.password_hash)) {
-    registerFail(key);
+    await registerFail(key);
     return res.status(401).json({ error: 'E-mail ou senha inválidos' });
   }
-  loginFails.delete(key);
+  await clearFails(key);
   req.session = { userId: user.id };
   res.json({ ok: true, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
 }));
@@ -272,6 +299,28 @@ app.get('/api/status', requireAuth, h(async (req, res) => {
     ultimoLancamento: r.ultimo || null,
     assinatura: [r.ultimo || '', r.lancamentos, r.colaboradores, r.exigencias].join('|'),
   });
+}));
+
+// ---- Treinamentos realizados ----
+// Histórico completo de lançamentos, para responder "quem foi treinado em tal
+// mês". Diferente do painel, que mostra só a situação mais recente de cada
+// colaborador × treinamento, aqui cada realização aparece.
+app.get('/api/realizados', requirePerm('realizados'), h(async (req, res) => {
+  const escopo = await scopeFor(req.user);
+  const linhas = await db.all(`SELECT r.id, r.realizacao, r.vencimento, r.obs,
+      e.id AS employee_id, e.name AS colaborador, e.demissao,
+      COALESCE(c.short_name, c.name) AS empresa, c.name AS empresa_completa,
+      g.name AS cargo, t.name AS treinamento, t.id AS training_id,
+      t.ch_formacao, t.ch_reciclagem, t.custo_formacao, t.custo_reciclagem
+    FROM records r
+    JOIN employees e ON e.id = r.employee_id
+    JOIN companies c ON c.id = e.company_id
+    LEFT JOIN cargos g ON g.id = e.cargo_id
+    JOIN trainings t ON t.id = r.training_id
+    WHERE r.realizacao IS NOT NULL AND e.active = 1
+    ORDER BY r.realizacao DESC`);
+  const visiveis = escopo ? linhas.filter(l => escopo.includes(l.employee_id)) : linhas;
+  res.json({ realizados: visiveis, hoje: todayISO() });
 }));
 
 // ---- Avisos aos gestores ----
@@ -851,14 +900,17 @@ app.get('/api/export', requirePerm('exportar'), h(async (req, res) => {
 }));
 
 // ---- Páginas ----
-app.use(express.static(path.join(__dirname, 'public'), { index: false }));
-app.get('/login', (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
-app.get('/', (req, res) => {
-  // Vale tanto para quem entrou com login quanto para o acesso do gestor.
-  const temSessao = req.session && (req.session.userId || req.session.convidado);
-  if (!temSessao) return res.redirect('/login');
+const temSessao = (req) => !!(req.session && (req.session.userId || req.session.convidado));
+// A página do painel é servida só por estas rotas, nunca pelo diretório estático:
+// sem isso, /index.html entregaria a tela a quem não tem sessão. Ela não contém
+// dados — eles vêm da API, que é protegida —, mas não há motivo para exibir a
+// estrutura interna do sistema a quem ainda não entrou.
+app.get(['/index.html', '/'], (req, res) => {
+  if (!temSessao(req)) return res.redirect('/login');
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
+app.use(express.static(path.join(__dirname, 'public'), { index: false }));
+app.get('/login', (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
 
 app.use((err, req, res, _next) => {
   console.error('Erro não tratado:', err);

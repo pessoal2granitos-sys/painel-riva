@@ -1,0 +1,3 @@
+# O painel contém dados de colaboradores e não deve aparecer em buscadores.
+User-agent: *
+Disallow: /

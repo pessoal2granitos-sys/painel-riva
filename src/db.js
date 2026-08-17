@@ -169,6 +169,14 @@ CREATE TABLE IF NOT EXISTS avisos (
   atualizado_em TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_avisos_ordem ON avisos(ativo, fixado DESC, criado_em DESC);
+-- Tentativas de login que falharam. Fica no banco, e não na memória, porque em
+-- hospedagem serverless cada requisição pode cair numa instância diferente: um
+-- contador em memória se perde e o bloqueio por força bruta deixa de valer.
+CREATE TABLE IF NOT EXISTS login_fails (
+  chave TEXT PRIMARY KEY,
+  tentativas INTEGER NOT NULL DEFAULT 0,
+  primeira TEXT NOT NULL DEFAULT (datetime('now'))
+);
 -- Perfis de acesso: definem quais painéis e ações cada usuário enxerga.
 CREATE TABLE IF NOT EXISTS profiles (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -233,6 +241,10 @@ function init() {
         }
         if (perm.avisos === undefined) {          // ler comunicados: todos
           perm.avisos = true;
+          mudou = true;
+        }
+        if (perm.realizados === undefined) {      // quem já vê indicadores
+          perm.realizados = admin ? true : !!perm.visao;
           mudou = true;
         }
         if (perm.publicar_avisos === undefined) { // publicar: quem já configura

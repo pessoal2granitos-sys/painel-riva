@@ -58,6 +58,7 @@ function confirmar(msg, titulo = 'Confirmar') {
 }
 
 async function loadAll() {
+  REALIZADOS = null;   // histórico é recarregado junto, para refletir novos lançamentos
   DS = await api('/api/dataset');
   ME = DS.user;
   const emap = new Map(DS.employees.map(e => [e.id, e]));
@@ -250,7 +251,7 @@ function renderAvisoEscopo(visivel) {
 }
 
 function renderTab() {
-  const dash = ['visao', 'vencimentos', 'pendencias', 'cargos', 'custo', 'qualidade'].includes(currentTab);
+  const dash = ['visao', 'vencimentos', 'realizados', 'pendencias', 'cargos', 'custo', 'qualidade'].includes(currentTab);
   $('filterBar').style.display = dash ? '' : 'none';
   renderAvisoEscopo(dash);
   document.querySelectorAll('main > section').forEach(s => s.style.display = 'none');
@@ -258,7 +259,8 @@ function renderTab() {
   if (!alvo) return;
   alvo.style.display = '';
   const render = { avisos: renderAvisos, visao: renderVisao, vencimentos: renderVencimentos,
-                   pendencias: renderPendencias, cargos: renderCargos, custo: renderCusto,
+                   realizados: renderRealizados, pendencias: renderPendencias,
+                   cargos: renderCargos, custo: renderCusto,
                    qualidade: renderQualidade, admin: renderAdmin }[currentTab];
   if (render) render();
 }
@@ -410,12 +412,19 @@ function renderVencimentos() {
   for (const r of v90) turmas[r.trName] = (turmas[r.trName] || 0) + 1;
   const turmasItems = Object.entries(turmas).map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
 
-  // agenda: tudo com vencimento + pendentes no fim se filtrado
-  const agenda = rows.filter(r => r.vencimento).map(r => ({
+  // Agenda: tudo que precisa de atenção — vencidos, pendentes (nunca realizados,
+  // por isso sem data) e os válidos por ordem de vencimento.
+  const agenda = rows.map(r => ({
     empName: r.empName, company: r.companyShort, cargo: r.cargo, trName: r.trName,
     realizacao: r.realizacao, vencimento: r.vencimento, dias: r.dias, status: r.status,
+    horas: r.horas,
   }));
-  agenda.sort((a, b) => (a.dias ?? 99999) - (b.dias ?? 99999));
+  // Do mais crítico ao mais distante: vencido (do mais antigo), depois pendente,
+  // depois válido (do que vence antes).
+  const ordem = { 'VENCIDO': 0, 'PENDENTE': 1, 'VÁLIDO': 2 };
+  agenda.sort((a, b) => (ordem[a.status] - ordem[b.status]) ||
+                        ((a.dias ?? 0) - (b.dias ?? 0)) ||
+                        a.empName.localeCompare(b.empName, 'pt-BR'));
 
   // Filtro próprio da agenda, além dos filtros gerais do topo.
   const val = (id) => ($(id) ? $(id).value : '');
@@ -430,11 +439,14 @@ function renderVencimentos() {
       if (emp && a.company !== emp) return false;
       if (sit && a.status !== sit) return false;
       if (trn && a.trName !== trn) return false;
-      if (prazo === 'vencidos' && a.dias >= 0) return false;
-      if (prazo === '30' && !(a.dias >= 0 && a.dias <= 30)) return false;
-      if (prazo === '60' && !(a.dias >= 0 && a.dias <= 60)) return false;
-      if (prazo === '90' && !(a.dias >= 0 && a.dias <= 90)) return false;
-      if (prazo === 'criticos' && a.dias > 30) return false;
+      // Pendente não tem data, então só entra nos recortes que não dependem de prazo.
+      const pendente = a.status === 'PENDENTE';
+      if (prazo === 'pendentes' && !pendente) return false;
+      if (prazo === 'vencidos' && !(!pendente && a.dias < 0)) return false;
+      if (prazo === '30' && !(!pendente && a.dias >= 0 && a.dias <= 30)) return false;
+      if (prazo === '60' && !(!pendente && a.dias >= 0 && a.dias <= 60)) return false;
+      if (prazo === '90' && !(!pendente && a.dias >= 0 && a.dias <= 90)) return false;
+      if (prazo === 'criticos' && !(pendente || a.dias <= 30)) return false;
       return true;
     });
   };
@@ -445,12 +457,16 @@ function renderVencimentos() {
       $('agResumo').innerHTML = '<b>' + fmtN(lista.length) + '</b> de ' + fmtN(agenda.length) + ' registros' +
         (lista.length > 400 ? ' · a tela mostra os 400 primeiros; o arquivo baixado traz todos' : '');
     }
-    $('agendaBody').innerHTML = lista.slice(0, 400).map(a => `<tr>
-      <td>${esc(a.empName)}</td><td>${esc(a.company)}</td><td>${esc(a.cargo)}</td><td>${esc(a.trName)}</td>
-      <td>${brDate(a.realizacao)}</td><td>${brDate(a.vencimento)}</td>
-      <td style="text-align:center;font-weight:700;color:${a.dias < 0 ? 'var(--red)' : a.dias <= 60 ? 'var(--amber)' : 'var(--navy)'}">${a.dias}</td>
-      <td><span class="badge ${STATUS_CLASS[a.status]}">${a.status}</span></td></tr>`).join('') ||
-      '<tr><td colspan="8" class="empty">Nenhum registro com esses filtros</td></tr>';
+    $('agendaBody').innerHTML = lista.slice(0, 400).map(a => {
+      const pendente = a.status === 'PENDENTE';
+      const corDias = a.dias < 0 ? 'var(--red)' : a.dias <= 60 ? 'var(--amber)' : 'var(--navy)';
+      return `<tr>
+        <td>${esc(a.empName)}</td><td>${esc(a.company)}</td><td>${esc(a.cargo)}</td><td>${esc(a.trName)}</td>
+        <td>${pendente ? '<span class="hint">nunca realizado</span>' : brDate(a.realizacao)}</td>
+        <td>${pendente ? '—' : brDate(a.vencimento)}</td>
+        <td style="text-align:center;font-weight:700;color:${pendente ? 'var(--muted)' : corDias}">${pendente ? '—' : a.dias}</td>
+        <td><span class="badge ${STATUS_CLASS[a.status]}">${a.status}</span></td></tr>`;
+    }).join('') || '<tr><td colspan="8" class="empty">Nenhum registro com esses filtros</td></tr>';
   };
 
   // O que vai para o Excel ou PDF: a lista filtrada inteira, sem o corte de tela.
@@ -464,7 +480,9 @@ function renderVencimentos() {
       { nome: 'Dias', largura: 6 }, { nome: 'Situação', largura: 8 },
     ],
     linhas: agendaFiltrada().map(a => [a.empName, a.company, a.cargo, a.trName,
-      brDate(a.realizacao), brDate(a.vencimento), a.dias, a.status]),
+      a.status === 'PENDENTE' ? 'nunca realizado' : brDate(a.realizacao),
+      a.status === 'PENDENTE' ? '' : brDate(a.vencimento),
+      a.status === 'PENDENTE' ? '' : a.dias, a.status]),
   });
 
   $('tab-vencimentos').innerHTML = `
@@ -487,7 +505,7 @@ function renderVencimentos() {
       </div>
     </div>
     <div class="card">
-      <h3>Agenda detalhada <small>do mais crítico ao mais distante · clique no cabeçalho para reordenar</small></h3>
+      <h3>Agenda detalhada <small>vencidos, pendentes e a vencer · do mais crítico ao mais distante · clique no cabeçalho para reordenar</small></h3>
       <div class="filtros-secao" style="box-shadow:none;padding:0 0 14px;background:transparent">
         <div class="f" style="flex:2"><label>Buscar na agenda</label>
           <input type="search" id="agBusca" placeholder="colaborador, treinamento, função ou empresa"></div>
@@ -498,11 +516,12 @@ function renderVencimentos() {
           ${[...new Set(agenda.map(a => a.trName))].sort((a, b) => a.localeCompare(b, 'pt-BR'))
             .map(t => `<option>${esc(t)}</option>`).join('')}</select></div>
         <div class="f"><label>Situação</label><select id="agSituacao">
-          <option value="">Todas</option><option>VÁLIDO</option><option>VENCIDO</option>
+          <option value="">Todas</option><option>PENDENTE</option><option>VENCIDO</option><option>VÁLIDO</option>
         </select></div>
         <div class="f"><label>Prazo</label><select id="agPrazo">
           <option value="">Todos os prazos</option>
-          <option value="criticos">Críticos (vencidos + 30 dias)</option>
+          <option value="criticos">Críticos (pendentes + vencidos + 30 dias)</option>
+          <option value="pendentes">Somente pendentes</option>
           <option value="vencidos">Somente vencidos</option>
           <option value="30">Vence em até 30 dias</option>
           <option value="60">Vence em até 60 dias</option>
@@ -671,6 +690,204 @@ window.excluirAviso = async (id) => {
   await api('/api/avisos/' + id, { method: 'DELETE' });
   toast('Comunicado excluído'); renderAvisos();
 };
+
+// ===== Treinamentos Realizados =====
+// Responde "quem foi treinado no mês". Usa o histórico completo de lançamentos,
+// não a situação atual: uma pessoa que reciclou três vezes aparece três vezes,
+// cada uma no seu mês.
+let REALIZADOS = null;
+let periodoRealizados = null;   // 'AAAA-MM' ou 'ano:AAAA' ou 'tudo'
+
+const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+               'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+const nomeMes = (aaaaMm) => {
+  const [a, m] = aaaaMm.split('-');
+  return MESES[Number(m) - 1] + ' de ' + a;
+};
+
+async function renderRealizados() {
+  if (!REALIZADOS) {
+    $('tab-realizados').innerHTML = '<div class="card"><div class="empty">Carregando o histórico…</div></div>';
+    REALIZADOS = (await api('/api/realizados')).realizados;
+  }
+
+  // Meses que têm alguma realização, do mais recente para o mais antigo.
+  const meses = [...new Set(REALIZADOS.map(r => r.realizacao.slice(0, 7)))].sort().reverse();
+  const anos = [...new Set(meses.map(m => m.slice(0, 4)))].sort().reverse();
+  if (!periodoRealizados) periodoRealizados = meses[0] || 'tudo';
+
+  const noPeriodo = (r) => {
+    if (periodoRealizados === 'tudo') return true;
+    if (periodoRealizados.startsWith('ano:')) return r.realizacao.slice(0, 4) === periodoRealizados.slice(4);
+    return r.realizacao.slice(0, 7) === periodoRealizados;
+  };
+  // Os filtros do topo (empresa, cargo, treinamento, busca) também valem aqui.
+  const passaFiltro = (r) => {
+    const fe = $('fEmpresa').value, fc = $('fCargo').value, ft = $('fTreinamento').value,
+          fb = $('fBusca').value.trim().toLowerCase();
+    if (fe && r.empresa_completa !== fe) return false;
+    if (fc && (r.cargo || '') !== fc) return false;
+    if (ft && r.treinamento !== ft) return false;
+    if (fb && !r.colaborador.toLowerCase().includes(fb)) return false;
+    return true;
+  };
+
+  const base = REALIZADOS.filter(passaFiltro);
+  const lista = base.filter(noPeriodo);
+  const pessoas = new Set(lista.map(r => r.employee_id));
+  const horas = lista.reduce((s, r) => s + (r.ch_formacao || 0), 0);
+  const tipos = new Set(lista.map(r => r.training_id));
+
+  // Comparação com o período anterior equivalente, para dar noção de ritmo.
+  let comparativo = '';
+  if (/^\d{4}-\d{2}$/.test(periodoRealizados)) {
+    const d = new Date(periodoRealizados + '-15T12:00:00');
+    d.setMonth(d.getMonth() - 1);
+    const anterior = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    const qtdAnterior = base.filter(r => r.realizacao.slice(0, 7) === anterior).length;
+    if (qtdAnterior || lista.length) {
+      const dif = lista.length - qtdAnterior;
+      comparativo = dif === 0 ? 'igual a ' + nomeMes(anterior)
+        : (dif > 0 ? '+' : '') + dif + ' em relação a ' + nomeMes(anterior);
+    }
+  }
+
+  // Gráfico dos últimos 12 meses com movimento.
+  const ultimos = meses.slice(0, 12).reverse();
+  const porMes = ultimos.map(m => ({
+    label: m.slice(5) + '/' + m.slice(2, 4),
+    valor: base.filter(r => r.realizacao.slice(0, 7) === m).length,
+    chave: m,
+  }));
+
+  // Treinamentos mais aplicados no período.
+  const porTreino = {};
+  for (const r of lista) {
+    porTreino[r.treinamento] = porTreino[r.treinamento] || { qtd: 0, pessoas: new Set(), horas: 0 };
+    porTreino[r.treinamento].qtd++;
+    porTreino[r.treinamento].pessoas.add(r.employee_id);
+    porTreino[r.treinamento].horas += r.ch_formacao || 0;
+  }
+  const treinoItems = Object.entries(porTreino)
+    .map(([label, d]) => ({ label, value: d.qtd, pessoas: d.pessoas.size, horas: d.horas }))
+    .sort((a, b) => b.value - a.value);
+
+  const titulo = periodoRealizados === 'tudo' ? 'todo o histórico'
+    : periodoRealizados.startsWith('ano:') ? periodoRealizados.slice(4)
+    : nomeMes(periodoRealizados);
+
+  $('tab-realizados').innerHTML = `
+    <div class="filtros-secao">
+      <div class="f" style="max-width:280px"><label>Período</label>
+        <select id="rlPeriodo">
+          <optgroup label="Mês">
+            ${meses.map(m => `<option value="${m}" ${m === periodoRealizados ? 'selected' : ''}>${nomeMes(m)}</option>`).join('')}
+          </optgroup>
+          <optgroup label="Ano inteiro">
+            ${anos.map(a => `<option value="ano:${a}" ${'ano:' + a === periodoRealizados ? 'selected' : ''}>${a}</option>`).join('')}
+          </optgroup>
+          <option value="tudo" ${periodoRealizados === 'tudo' ? 'selected' : ''}>Todo o histórico</option>
+        </select></div>
+      <div class="f" style="flex:2"><label>Buscar nesta lista</label>
+        <input type="search" id="rlBusca" placeholder="colaborador ou treinamento"></div>
+      <div style="align-self:flex-end;display:flex;gap:8px">${botoesBaixar('rl')}</div>
+    </div>
+
+    <div class="kpis">
+      ${kpi('Pessoas treinadas', fmtN(pessoas.size), 'colaboradores distintos em ' + titulo, 'green')}
+      ${kpi('Treinamentos realizados', fmtN(lista.length), comparativo || 'lançamentos no período')}
+      ${kpi('Horas de treinamento', fmtH(horas) + ' h', 'somando a carga horária da matriz', 'orange')}
+      ${kpi('Tipos de NR aplicados', fmtN(tipos.size), 'treinamentos diferentes')}
+    </div>
+
+    <div class="grid split-31">
+      <div class="card">
+        <h3>Realizados por mês <small>últimos ${porMes.length} meses com movimento</small></h3>
+        <div class="chart-box"><canvas id="chartRealizados"></canvas></div>
+      </div>
+      <div class="card">
+        <h3>Treinamentos aplicados em ${esc(titulo)} <small>${fmtN(treinoItems.length)} tipo(s)</small></h3>
+        <div class="tbl-wrap" style="max-height:320px"><table class="tbl fixa">
+          <colgroup><col style="width:52%"><col style="width:16%"><col style="width:16%"><col style="width:16%"></colgroup>
+          <thead><tr><th>Treinamento</th><th style="text-align:center">Turmas</th>
+            <th style="text-align:center">Pessoas</th><th style="text-align:center">Horas</th></tr></thead>
+          <tbody>${treinoItems.map(t => `<tr>
+            <td>${esc(t.label)}</td>
+            <td style="text-align:center;font-weight:700">${t.value}</td>
+            <td style="text-align:center">${t.pessoas}</td>
+            <td style="text-align:center">${fmtH(t.horas)} h</td></tr>`).join('') ||
+            '<tr><td colspan="4" class="empty">Nenhum treinamento no período</td></tr>'}</tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Quem foi treinado em ${esc(titulo)} <small id="rlResumo"></small></h3>
+      <div class="tbl-wrap" style="max-height:520px"><table class="tbl fixa">
+        <colgroup><col style="width:24%"><col style="width:13%"><col style="width:19%"><col style="width:24%"><col style="width:10%"><col style="width:10%"></colgroup>
+        <thead><tr><th>Colaborador</th><th>Empresa</th><th>Função</th><th>Treinamento</th>
+          <th style="text-align:center">Realizado em</th><th style="text-align:center">Vence em</th></tr></thead>
+        <tbody id="rlBody"></tbody></table></div>
+    </div>`;
+
+  const filtrada = () => {
+    const q = $('rlBusca').value.trim().toLowerCase();
+    return lista.filter(r => !q ||
+      (r.colaborador + ' ' + r.treinamento + ' ' + (r.cargo || '') + ' ' + r.empresa).toLowerCase().includes(q));
+  };
+  const pintar = () => {
+    const l = filtrada();
+    $('rlResumo').textContent = fmtN(l.length) + ' registro(s)' +
+      (l.length > 400 ? ' · a tela mostra os 400 primeiros' : '');
+    $('rlBody').innerHTML = l.slice(0, 400).map(r => `<tr>
+      <td>${esc(r.colaborador)}${r.demissao ? ' <span class="hint">(desligado)</span>' : ''}</td>
+      <td>${esc(r.empresa)}</td><td>${esc(r.cargo || '—')}</td><td>${esc(r.treinamento)}</td>
+      <td style="text-align:center">${brDate(r.realizacao)}</td>
+      <td style="text-align:center">${r.vencimento ? brDate(r.vencimento) : '—'}</td></tr>`).join('') ||
+      '<tr><td colspan="6" class="empty">Nenhum treinamento realizado neste período</td></tr>';
+  };
+  pintar();
+
+  $('rlPeriodo').addEventListener('change', (e) => { periodoRealizados = e.target.value; renderRealizados(); });
+  $('rlBusca').addEventListener('input', pintar);
+  ligarBotoesBaixar('rl', () => ({
+    titulo: 'Treinamentos Realizados - ' + titulo,
+    aba: 'Realizados',
+    colunas: [
+      { nome: 'Colaborador', largura: 22 }, { nome: 'Empresa', largura: 13 },
+      { nome: 'Função', largura: 17 }, { nome: 'Treinamento', largura: 22 },
+      { nome: 'Realizado em', largura: 10 }, { nome: 'Vence em', largura: 10 },
+      { nome: 'Carga horária', largura: 8 },
+    ],
+    linhas: filtrada().map(r => [r.colaborador, r.empresa, r.cargo || '', r.treinamento,
+      brDate(r.realizacao), r.vencimento ? brDate(r.vencimento) : '', r.ch_formacao || '']),
+  }));
+
+  destroyChart('realizados');
+  charts.realizados = new Chart($('chartRealizados'), {
+    type: 'bar',
+    data: {
+      labels: porMes.map(m => m.label),
+      datasets: [{
+        data: porMes.map(m => m.valor),
+        backgroundColor: porMes.map(m => m.chave === periodoRealizados ? '#F5893B' : '#1d4b76'),
+        borderRadius: 5,
+      }],
+    },
+    options: {
+      plugins: { legend: { display: false } }, maintainAspectRatio: false,
+      layout: { padding: { top: 18 } },
+      scales: { y: { display: false, beginAtZero: true, grace: '12%' },
+                x: { grid: { display: false }, ticks: { font: { size: 10 } } } },
+      onClick: (evt, els) => {
+        if (!els.length) return;
+        periodoRealizados = porMes[els[0].index].chave;
+        renderRealizados();
+      },
+    },
+    plugins: [barValueLabels],
+  });
+}
 
 // ===== Pendências e Pontos de Atenção =====
 // Reúne, num só lugar, tudo que precisa de ação: treinamentos em aberto e
