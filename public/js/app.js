@@ -2552,13 +2552,35 @@ setInterval(() => { if (!document.hidden) verificarNovidades(); }, 120000);
 
 $('btnLogout').addEventListener('click', async () => { await api('/api/logout', { method: 'POST' }); location.href = '/login'; });
 $('btnMyPassword').addEventListener('click', () => {
+  const ehAdmin = ME.role === 'admin';
   openModal('Trocar minha senha', `
     <label>Senha atual</label><input type="password" id="mAtual">
-    <label>Nova senha (mínimo 6 caracteres)</label><input type="password" id="mNova">`,
+    <label>Nova senha (mínimo 6 caracteres)</label><input type="password" id="mNova">
+    ${ehAdmin ? `<div class="hint" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line)">
+      Se você esquecer a senha, não há mais ninguém que possa trocá-la por você — por isso
+      existe o código de recuperação. Gere um, anote em lugar seguro (não neste computador)
+      e use na tela de login se precisar.
+      <div style="margin-top:8px"><button class="btn-ghost" id="btnGerarCodigo" type="button">Gerar código de recuperação</button></div>
+    </div>` : ''}`,
     [{ label: 'Alterar', cls: 'btn-primary', onClick: async () => {
       await api('/api/me/password', { method: 'POST', body: JSON.stringify({ current: $('mAtual').value, next: $('mNova').value }) });
       closeModal(); toast('Senha alterada com sucesso');
     } }]);
+  if (ehAdmin) {
+    $('btnGerarCodigo').addEventListener('click', async () => {
+      if (!await confirmar('Gerar um novo código de recuperação invalida qualquer código anterior. Continuar?',
+        'Gerar código de recuperação')) return;
+      const r = await api('/api/me/recovery-code', { method: 'POST' });
+      openModal('Seu código de recuperação', `
+        <p style="font-size:13.5px;line-height:1.6">Anote este código agora — ele <b>não vai aparecer de novo</b>.
+        Guarde em um lugar seguro, fora deste computador (papel, cofre de senhas). Serve para
+        redefinir a senha da administradora caso ela seja esquecida.</p>
+        <div style="font:700 22px/1.4 monospace;letter-spacing:1px;background:var(--bg);
+          border:1px solid var(--line);border-radius:8px;padding:14px;text-align:center;
+          margin:14px 0;user-select:all">${esc(r.codigo)}</div>`,
+        [{ label: 'Já anotei, fechar', cls: 'btn-primary', onClick: () => closeModal() }]);
+    });
+  }
 });
 
 // Rede de segurança: qualquer falha não tratada vira aviso visível.

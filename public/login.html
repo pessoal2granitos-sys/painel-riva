@@ -44,6 +44,22 @@
       <label for="password">Senha</label>
       <input type="password" id="password" autocomplete="current-password" required>
       <button class="btn-primary" type="submit">Entrar</button>
+      <button type="button" class="link-esqueci" id="btnEsqueci">Esqueci minha senha</button>
+    </form>
+
+    <!-- Recuperação de senha da administradora, com código gerado por ela mesma -->
+    <form id="recuperarForm" style="display:none">
+      <button type="button" class="voltar" id="btnVoltarRecuperar">← Voltar</button>
+      <p class="sub" style="text-align:left;margin:0 0 14px">
+        Disponível só para a conta administradora, com o código de recuperação
+        gerado por ela na tela de Senha.</p>
+      <label for="recEmail">E-mail</label>
+      <input type="email" id="recEmail" autocomplete="username" required>
+      <label for="recCodigo">Código de recuperação</label>
+      <input type="text" id="recCodigo" placeholder="RIVA-XXXX-XXXX-XXXX" required>
+      <label for="recSenha">Nova senha (mínimo 6 caracteres)</label>
+      <input type="password" id="recSenha" autocomplete="new-password" required>
+      <button class="btn-primary" type="submit">Redefinir senha</button>
     </form>
 
     <div class="login-error" id="err"></div>
@@ -52,11 +68,13 @@
   <script>
     const escolha = document.getElementById('escolha');
     const form = document.getElementById('loginForm');
+    const recuperarForm = document.getElementById('recuperarForm');
     const err = document.getElementById('err');
     const btnGestor = document.getElementById('btnGestor');
 
-    function mostrarErro(msg) { err.textContent = msg; err.style.display = 'block'; }
-    function limparErro() { err.style.display = 'none'; }
+    function mostrarErro(msg) { err.textContent = msg; err.classList.remove('sucesso'); err.style.display = 'block'; }
+    function mostrarSucesso(msg) { err.textContent = msg; err.classList.add('sucesso'); err.style.display = 'block'; }
+    function limparErro() { err.style.display = 'none'; err.classList.remove('sucesso'); }
 
     // Só mostra o botão do gestor se a administradora mantiver o acesso liberado;
     // do contrário a tela já abre no login, sem uma porta que não leva a lugar nenhum.
@@ -83,6 +101,39 @@
       limparErro();
       form.style.display = 'none';
       escolha.style.display = 'block';
+    });
+
+    document.getElementById('btnEsqueci').addEventListener('click', () => {
+      limparErro();
+      form.style.display = 'none';
+      recuperarForm.style.display = 'block';
+      setTimeout(() => document.getElementById('recEmail').focus(), 60);
+    });
+
+    document.getElementById('btnVoltarRecuperar').addEventListener('click', () => {
+      limparErro();
+      recuperarForm.style.display = 'none';
+      form.style.display = 'block';
+    });
+
+    recuperarForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      limparErro();
+      const res = await fetch('/api/recuperar-senha', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: document.getElementById('recEmail').value,
+          codigo: document.getElementById('recCodigo').value,
+          novaSenha: document.getElementById('recSenha').value,
+        })
+      });
+      if (res.ok) {
+        recuperarForm.style.display = 'none';
+        form.style.display = 'block';
+        mostrarSucesso('Senha redefinida. Entre com a nova senha.');
+        return;
+      }
+      mostrarErro((await res.json().catch(() => ({}))).error || 'Não foi possível redefinir a senha');
     });
 
     btnGestor.addEventListener('click', async () => {

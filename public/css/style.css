@@ -94,6 +94,15 @@ input, select, textarea { font-family: inherit; font-size: 13px; }
 }
 .voltar:hover { color: var(--orange); }
 
+/* Link discreto para abrir a recuperação de senha. */
+.link-esqueci {
+  background: none; border: none; color: var(--muted); font-size: 12px;
+  width: 100%; text-align: center; margin-top: 12px; padding: 4px;
+}
+.link-esqueci:hover { color: var(--orange); }
+
+.login-error.sucesso { background: #e9f6ec; color: var(--green); }
+
 /* ---------- Botões ---------- */
 .btn-primary {
   background: linear-gradient(180deg, var(--orange), var(--orange-dark)); color: #fff; border: none;

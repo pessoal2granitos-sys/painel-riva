@@ -262,6 +262,50 @@ app.post('/api/me/password', semConvidado, h(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// ---- Código de recuperação da administradora ----
+// A administradora é quem redefine a senha de todo mundo (tela de Usuários) — só
+// a conta dela mesma não tem quem faça isso por fora. Este código é a única forma
+// de recuperar o acesso sem mexer direto no banco: gerado por ela, uso único,
+// mostrado uma vez só (nunca fica gravado em texto puro, só o hash).
+function gerarCodigoRecuperacao() {
+  const alfabeto = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sem O/0/I/1, para não confundir na hora de digitar
+  const grupo = () => Array.from({ length: 4 }, () => alfabeto[crypto.randomInt(alfabeto.length)]).join('');
+  return 'RIVA-' + grupo() + '-' + grupo() + '-' + grupo();
+}
+
+app.post('/api/me/recovery-code', semConvidado, h(async (req, res) => {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Disponível apenas para a administradora' });
+  }
+  const codigo = gerarCodigoRecuperacao();
+  await db.run('UPDATE users SET recovery_code_hash = ? WHERE id = ?', bcrypt.hashSync(codigo, 10), req.user.id);
+  await registrar(req, 'Código de recuperação gerado', { detalhe: 'código anterior (se existia) foi invalidado' });
+  res.json({ ok: true, codigo });
+}));
+
+app.post('/api/recuperar-senha', h(async (req, res) => {
+  const { email, codigo, novaSenha } = req.body || {};
+  const key = loginKey(req, email) + '|recuperacao';
+  if (await isLocked(key)) {
+    return res.status(429).json({ error: 'Muitas tentativas. Aguarde 15 minutos e tente novamente.' });
+  }
+  if (!novaSenha || String(novaSenha).length < 6) {
+    return res.status(400).json({ error: 'A nova senha deve ter ao menos 6 caracteres' });
+  }
+  const user = await db.get("SELECT * FROM users WHERE email = ? AND active = 1 AND role = 'admin'",
+    String(email || '').trim());
+  if (!user || !user.recovery_code_hash ||
+      !bcrypt.compareSync(String(codigo || '').trim().toUpperCase(), user.recovery_code_hash)) {
+    await registerFail(key);
+    return res.status(401).json({ error: 'E-mail ou código de recuperação inválidos' });
+  }
+  await clearFails(key);
+  // Uso único: o código é invalidado assim que usado, mesmo com sucesso.
+  await db.run('UPDATE users SET password_hash = ?, recovery_code_hash = NULL WHERE id = ?',
+    bcrypt.hashSync(String(novaSenha), 10), user.id);
+  res.json({ ok: true });
+}));
+
 // ---- Alcance de visibilidade ----
 // Líder enxerga apenas a equipe atribuída a ele; os demais perfis veem tudo.
 async function scopeFor(user) {

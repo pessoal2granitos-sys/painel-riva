@@ -203,6 +203,9 @@ function init() {
       if (!cargoCols.includes('trail_source_id')) await run('ALTER TABLE cargos ADD COLUMN trail_source_id INTEGER REFERENCES cargos(id)');
       const userCols = (await all('PRAGMA table_info(users)')).map(c => c.name);
       if (!userCols.includes('profile_id')) await run('ALTER TABLE users ADD COLUMN profile_id INTEGER REFERENCES profiles(id)');
+      // Código de recuperação da administradora: gerado por ela mesma, uso único.
+      // Sem isso, esquecer a senha exigiria mexer direto no banco.
+      if (!userCols.includes('recovery_code_hash')) await run('ALTER TABLE users ADD COLUMN recovery_code_hash TEXT');
 
       // Cria os perfis padrão e liga os usuários antigos ao perfil equivalente.
       const { PADRAO, POR_PAPEL, GESTOR_PUBLICO, permsGestorPublico } = require('./perms');
