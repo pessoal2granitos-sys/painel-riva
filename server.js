@@ -51,7 +51,9 @@ app.use((req, res, next) => {
     "img-src 'self' data: https://*.public.blob.vercel-storage.com",
     "media-src 'self' https://*.public.blob.vercel-storage.com",
     "font-src 'self'",
-    "connect-src 'self'",
+    // Upload direto do navegador pro Vercel Blob (contorna o limite de 4,5 MB
+    // por requisição das funções da Vercel) precisa falar com esse domínio.
+    "connect-src 'self' https://blob.vercel-storage.com",
     "form-action 'self'",
     "frame-ancestors " + (isPlayer ? "'self'" : "'none'"),
     "base-uri 'self'",
@@ -950,7 +952,7 @@ app.get('/api/export', requirePerm('exportar'), h(async (req, res) => {
 }));
 
 // ---- TV Corporativa ----
-require('./src/tv').registerTvRoutes(app, { h, requirePerm });
+require('./src/tv').registerTvRoutes(app, { h, requirePerm, currentUser });
 app.get(['/player', '/player/:code'], (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'tv-player.html'));
 });

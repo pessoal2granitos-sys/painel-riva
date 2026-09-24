@@ -155,13 +155,28 @@ async function renderTvScreens() {
   $('tvFileInput').onchange = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    const form = new FormData();
-    form.append('file', file);
-    const res = await fetch('/api/tv/screens', { method: 'POST', body: form });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) return toast(data.error || 'Falha no upload.', true);
-    toast('Conteúdo enviado.');
-    renderTvScreens();
+    const ext = '.' + file.name.split('.').pop().toLowerCase();
+    const type = ['.jpg', '.jpeg', '.png'].includes(ext) ? 'image' : ext === '.mp4' ? 'video' : null;
+    if (!type) return toast('Use JPG, PNG ou MP4.', true);
+
+    try {
+      // Envia direto pro Vercel Blob a partir do navegador — não passa pelo nosso
+      // servidor, porque toda função da Vercel tem limite de 4,5 MB por requisição
+      // e vídeos costumam ser bem maiores que isso.
+      const blob = await VercelBlobClient.upload(file.name, file, {
+        access: 'public',
+        handleUploadUrl: '/api/tv/screens/upload-token',
+        contentType: file.type,
+      });
+      await tvApi('/screens/confirm', {
+        method: 'POST',
+        body: JSON.stringify({ name: file.name, type, url: blob.url, mime: file.type, sizeBytes: file.size }),
+      });
+      toast('Conteúdo enviado.');
+      renderTvScreens();
+    } catch (err) {
+      toast(err.message || 'Falha no upload.', true);
+    }
   };
 
   $('btnCreateWidget').onclick = () => openWidgetModal(null);

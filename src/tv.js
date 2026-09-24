@@ -6,6 +6,7 @@
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
+const { handleUpload } = require('@vercel/blob/client');
 
 const db = require('./db');
 
@@ -145,11 +146,57 @@ async function getPlaylistDetail(id) {
 
 const ONLINE_MS = 2 * 60 * 1000;
 
-function registerTvRoutes(app, { h, requirePerm }) {
+function registerTvRoutes(app, { h, requirePerm, currentUser }) {
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 300 * 1024 * 1024 } });
   const guard = requirePerm('tv');
 
   if (!USE_BLOB) app.use('/tv-uploads', require('express').static(LOCAL_UPLOADS_DIR));
+
+  // Upload direto do navegador pro Vercel Blob, sem passar pelo nosso servidor.
+  // Necessário porque toda função da Vercel tem limite de 4,5 MB por requisição —
+  // vídeos (e fotos grandes) estourariam isso se fossem enviados pela rota normal.
+  // A mesma rota atende duas chamadas diferentes do SDK: 1) o navegador pedindo um
+  // token de upload (aí exigimos a permissão 'tv' manualmente); 2) a Vercel avisando
+  // que o upload terminou (chamada assinada por ela, sem cookie de sessão).
+  app.post('/api/tv/screens/upload-token', h(async (req, res) => {
+    try {
+      const jsonResponse = await handleUpload({
+        body: req.body,
+        request: req,
+        onBeforeGenerateToken: async (pathname, clientPayload) => {
+          const user = await currentUser(req);
+          if (!user || !user.perms.tv) throw new Error('Não autorizado.');
+          return {
+            allowedContentTypes: ['image/jpeg', 'image/png', 'image/gif', 'video/mp4'],
+            addRandomSuffix: true,
+            tokenPayload: clientPayload,
+          };
+        },
+        // A gravação no banco acontece pela rota /confirm abaixo, chamada pelo
+        // próprio navegador — esse aviso da Vercel não funciona em desenvolvimento
+        // local (não alcança localhost), então não dependemos dele para nada.
+        onUploadCompleted: async () => {},
+      });
+      res.json(jsonResponse);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  }));
+
+  // Chamado pelo navegador logo após o upload direto terminar, para registrar
+  // a tela na biblioteca (com sessão normal, igual às demais rotas protegidas).
+  app.post('/api/tv/screens/confirm', guard, h(async (req, res) => {
+    const { name, type, url, mime, sizeBytes } = req.body;
+    if (!name || !MEDIA_TYPES.includes(type) || !url) {
+      return res.status(400).json({ error: 'Dados de upload incompletos.' });
+    }
+    const r = await db.run(
+      'INSERT INTO tv_screens (name, type, blob_url, mime, size_bytes) VALUES (?, ?, ?, ?, ?)',
+      name, type, url, mime || null, sizeBytes || null
+    );
+    const row = await db.get('SELECT * FROM tv_screens WHERE id = ?', r.lastInsertRowid);
+    res.status(201).json(serializeScreen(row));
+  }));
 
   // ---- Biblioteca de telas ----
   app.get('/api/tv/screens', guard, h(async (req, res) => {
