@@ -192,7 +192,7 @@ CREATE TABLE IF NOT EXISTS profiles (
 CREATE TABLE IF NOT EXISTS tv_screens (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
-  type TEXT NOT NULL CHECK (type IN ('image','video','weather','news','clock')),
+  type TEXT NOT NULL CHECK (type IN ('image','video','weather','news','clock','announcement')),
   blob_url TEXT,
   mime TEXT,
   size_bytes INTEGER,
@@ -256,6 +256,61 @@ function init() {
       // Código de recuperação da administradora: gerado por ela mesma, uso único.
       // Sem isso, esquecer a senha exigiria mexer direto no banco.
       if (!userCols.includes('recovery_code_hash')) await run('ALTER TABLE users ADD COLUMN recovery_code_hash TEXT');
+      // SQLite não permite alterar um CHECK depois de criado: bancos anteriores à
+      // tela de "comunicado" precisam recriar tv_screens com a lista de tipos nova.
+      const tvScreensSchema = await get("SELECT sql FROM sqlite_master WHERE type='table' AND name='tv_screens'");
+      if (tvScreensSchema && !tvScreensSchema.sql.includes('announcement')) {
+        await client.executeMultiple(`
+          PRAGMA foreign_keys = OFF;
+          ALTER TABLE tv_screens RENAME TO tv_screens_old;
+          CREATE TABLE tv_screens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            type TEXT NOT NULL CHECK (type IN ('image','video','weather','news','clock','announcement')),
+            blob_url TEXT,
+            mime TEXT,
+            size_bytes INTEGER,
+            config TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+          );
+          INSERT INTO tv_screens SELECT * FROM tv_screens_old;
+          DROP TABLE tv_screens_old;
+          PRAGMA foreign_keys = ON;
+        `);
+      }
+      // A migração acima renomeou tv_screens temporariamente; o SQLite reescreve
+      // sozinho as referências de chave estrangeira de outras tabelas para o nome
+      // temporário, deixando-as "penduradas" numa tabela que não existe mais.
+      // Corrige isso recriando as tabelas afetadas (nenhuma outra tabela referencia
+      // estas duas, então é seguro trocar de nome sem cascatas indesejadas).
+      const itemsSchema = await get("SELECT sql FROM sqlite_master WHERE type='table' AND name='tv_playlist_items'");
+      if (itemsSchema && itemsSchema.sql.includes('tv_screens_old')) {
+        await client.executeMultiple(`
+          CREATE TABLE tv_playlist_items_fixed (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            playlist_id INTEGER NOT NULL REFERENCES tv_playlists(id) ON DELETE CASCADE,
+            screen_id INTEGER NOT NULL REFERENCES tv_screens(id) ON DELETE CASCADE,
+            order_index INTEGER NOT NULL,
+            duration_seconds INTEGER NOT NULL DEFAULT 10
+          );
+          INSERT INTO tv_playlist_items_fixed SELECT * FROM tv_playlist_items;
+          ALTER TABLE tv_playlist_items RENAME TO tv_playlist_items_broken_20260924;
+          ALTER TABLE tv_playlist_items_fixed RENAME TO tv_playlist_items;
+        `);
+      }
+      const cacheSchema = await get("SELECT sql FROM sqlite_master WHERE type='table' AND name='tv_screen_cache'");
+      if (cacheSchema && cacheSchema.sql.includes('tv_screens_old')) {
+        await client.executeMultiple(`
+          CREATE TABLE tv_screen_cache_fixed (
+            screen_id INTEGER PRIMARY KEY REFERENCES tv_screens(id) ON DELETE CASCADE,
+            data TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+          );
+          INSERT INTO tv_screen_cache_fixed SELECT * FROM tv_screen_cache;
+          ALTER TABLE tv_screen_cache RENAME TO tv_screen_cache_broken_20260924;
+          ALTER TABLE tv_screen_cache_fixed RENAME TO tv_screen_cache;
+        `);
+      }
 
       // Cria os perfis padrão e liga os usuários antigos ao perfil equivalente.
       const { PADRAO, POR_PAPEL, GESTOR_PUBLICO, permsGestorPublico } = require('./perms');

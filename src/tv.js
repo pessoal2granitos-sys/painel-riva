@@ -10,7 +10,7 @@ const { handleUpload } = require('@vercel/blob/client');
 
 const db = require('./db');
 
-const WIDGET_TYPES = ['weather', 'news', 'clock'];
+const WIDGET_TYPES = ['weather', 'news', 'clock', 'announcement'];
 const MEDIA_TYPES = ['image', 'video'];
 const CACHE_MS = 15 * 60 * 1000;
 
@@ -122,7 +122,8 @@ async function getPlaylistDetail(id) {
   if (!playlist) return null;
   const items = await db.all(
     `SELECT tv_playlist_items.id, tv_playlist_items.order_index, tv_playlist_items.duration_seconds,
-            tv_screens.id AS screen_id, tv_screens.name, tv_screens.type, tv_screens.blob_url, tv_screens.size_bytes
+            tv_screens.id AS screen_id, tv_screens.name, tv_screens.type, tv_screens.blob_url,
+            tv_screens.size_bytes, tv_screens.config
      FROM tv_playlist_items
      JOIN tv_screens ON tv_screens.id = tv_playlist_items.screen_id
      WHERE tv_playlist_items.playlist_id = ?
@@ -139,6 +140,7 @@ async function getPlaylistDetail(id) {
       type: it.type,
       url: it.blob_url || null,
       sizeBytes: it.size_bytes,
+      config: it.config ? JSON.parse(it.config) : null,
       durationSeconds: it.duration_seconds,
     })),
   };
@@ -370,7 +372,7 @@ function registerTvRoutes(app, { h, requirePerm, currentUser }) {
     res.json({
       version: detail.version,
       items: detail.items.map((it) => ({
-        contentId: it.screenId, url: it.url, type: it.type, durationSeconds: it.durationSeconds,
+        contentId: it.screenId, url: it.url, type: it.type, config: it.config, durationSeconds: it.durationSeconds,
       })),
     });
   }));
@@ -417,14 +419,18 @@ function registerTvRoutes(app, { h, requirePerm, currentUser }) {
 
     const playlist = await db.get('SELECT * FROM tv_playlists WHERE id = ?', tv.current_playlist_id);
     const items = await db.all(
-      `SELECT tv_screens.id AS screen_id, tv_screens.blob_url, tv_screens.type, tv_playlist_items.duration_seconds
+      `SELECT tv_screens.id AS screen_id, tv_screens.blob_url, tv_screens.type, tv_screens.config,
+              tv_playlist_items.duration_seconds
        FROM tv_playlist_items JOIN tv_screens ON tv_screens.id = tv_playlist_items.screen_id
        WHERE tv_playlist_items.playlist_id = ? ORDER BY tv_playlist_items.order_index ASC`, playlist.id);
 
     res.json({
       playlist: {
         id: playlist.id, version: playlist.version,
-        items: items.map((it) => ({ contentId: it.screen_id, url: it.blob_url || null, type: it.type, durationSeconds: it.duration_seconds })),
+        items: items.map((it) => ({
+          contentId: it.screen_id, url: it.blob_url || null, type: it.type,
+          config: it.config ? JSON.parse(it.config) : null, durationSeconds: it.duration_seconds,
+        })),
       },
     });
   }));

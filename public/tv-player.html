@@ -108,6 +108,11 @@
   }
   #newsScreen li .source { display: block; font-size: 15px; font-weight: 700; color: var(--riva-orange); margin-bottom: 4px; letter-spacing: 0.5px; }
 
+  /* Tela de comunicado/transição — mesma linguagem visual das demais telas */
+  #announcementScreen { padding: 0 8vw; }
+  #announcementScreen .title { font-size: 64px; font-weight: 800; line-height: 1.15; }
+  #announcementScreen .subtitle { font-size: 28px; color: #cfe0e7; font-weight: 500; line-height: 1.4; }
+
   #previewBadge {
     position: absolute;
     top: 20px;
@@ -157,6 +162,13 @@
       <div class="title">Notícias<div class="accent-bar"></div></div>
       <ul></ul>
     </div>
+
+    <div id="announcementScreen" class="screen brand-screen">
+      <img class="brand-logo" src="/img/logo.png" alt="Riva Stones" />
+      <div class="title">-</div>
+      <div class="accent-bar"></div>
+      <div class="subtitle">-</div>
+    </div>
   </div>
 
 <script>
@@ -176,6 +188,7 @@
     clock: document.getElementById("clockScreen"),
     weather: document.getElementById("weatherScreen"),
     news: document.getElementById("newsScreen"),
+    announcement: document.getElementById("announcementScreen"),
   };
 
   let items = [];
@@ -245,6 +258,7 @@
     if (item.type === "clock") return showClockScreen(item);
     if (item.type === "weather") return showWeatherScreen(item);
     if (item.type === "news") return showNewsScreen(item);
+    if (item.type === "announcement") return showAnnouncementScreen(item);
     advanceToNext();
   }
 
@@ -354,6 +368,16 @@
         showScreen("news");
         advanceTimer = setTimeout(advanceToNext, seconds * 1000);
       });
+  }
+
+  function showAnnouncementScreen(item) {
+    const el = screens.announcement;
+    const config = item.config || {};
+    el.querySelector(".title").textContent = config.title || "";
+    el.querySelector(".subtitle").textContent = config.subtitle || "";
+    showScreen("announcement");
+    const seconds = item.durationSeconds || 10;
+    advanceTimer = setTimeout(advanceToNext, seconds * 1000);
   }
 
   fetchPlaylist();

@@ -6,9 +6,10 @@ let TV_SCREENS = [];
 let TV_DEVICES = [];
 let TV_PLAYLISTS = [];
 
-const WIDGET_ICON = { weather: '☀️', news: '📰', clock: '🕒' };
-const WIDGET_LABEL = { weather: 'Clima', news: 'Notícias', clock: 'Relógio' };
-const isWidget = (t) => ['weather', 'news', 'clock'].includes(t);
+const WIDGET_ICON = { weather: '☀️', news: '📰', clock: '🕒', announcement: '📢' };
+const WIDGET_LABEL = { weather: 'Clima', news: 'Notícias', clock: 'Relógio', announcement: 'Comunicado' };
+const WIDGET_TYPES = ['weather', 'news', 'clock', 'announcement'];
+const isWidget = (t) => WIDGET_TYPES.includes(t);
 
 async function tvApi(url, opts) {
   return api('/api/tv' + url, opts);
@@ -201,7 +202,7 @@ function openWidgetModal(existing) {
     return `
       ${!isEdit ? `
         <div style="display:flex;gap:8px;margin-bottom:14px">
-          ${['weather', 'news', 'clock'].map((t) => `
+          ${WIDGET_TYPES.map((t) => `
             <button class="btn-ghost tv-type-btn" data-type="${t}"
               style="flex:1;${type === t ? 'border-color:var(--navy);color:var(--navy)' : ''}">
               <div style="font-size:20px">${WIDGET_ICON[t]}</div>${WIDGET_LABEL[t]}
@@ -209,7 +210,7 @@ function openWidgetModal(existing) {
         </div>` : ''}
       <label>Nome da tela</label>
       <input class="inp" id="wName" value="${esc((existing && existing.name) || '')}"
-        placeholder="${type === 'weather' ? 'Previsão do Tempo' : type === 'news' ? 'Notícias do dia' : 'Relógio'}">
+        placeholder="${type === 'weather' ? 'Previsão do Tempo' : type === 'news' ? 'Notícias do dia' : type === 'announcement' ? 'Comunicado RH — Setembro' : 'Relógio'}">
       <div id="wConfigArea"></div>
     `;
   }
@@ -227,6 +228,16 @@ function openWidgetModal(existing) {
           <input class="inp" id="wSourceUrl" placeholder="URL do feed RSS">
           <button class="btn-ghost" id="wAddSource">Adicionar</button>
         </div>`;
+    }
+    if (type === 'announcement') {
+      const title = (existing && existing.config && existing.config.title) || '';
+      const subtitle = (existing && existing.config && existing.config.subtitle) || '';
+      return `
+        <label>Título (grande, em destaque)</label>
+        <input class="inp" id="wTitle" value="${esc(title)}" placeholder="Ex: Reunião geral sexta-feira">
+        <label>Texto complementar (opcional)</label>
+        <input class="inp" id="wSubtitle" value="${esc(subtitle)}" placeholder="Ex: Às 10h no auditório">
+        <p style="color:var(--muted);margin-top:10px;font-size:12.5px">Aparece em tela cheia com a identidade visual da Riva — mesmo estilo das telas de clima e relógio.</p>`;
     }
     return `<p style="color:var(--muted);margin-top:10px">Sem configuração adicional — mostra data e hora atualizadas automaticamente.</p>`;
   }
@@ -272,9 +283,13 @@ function openWidgetModal(existing) {
   $('wSave').onclick = async () => {
     const name = $('wName').value.trim();
     if (!name) return toast('Dê um nome para a tela.', true);
-    const config = type === 'weather' ? { city: $('wCity').value.trim() } : type === 'news' ? { sources } : {};
+    const config = type === 'weather' ? { city: $('wCity').value.trim() }
+      : type === 'news' ? { sources }
+      : type === 'announcement' ? { title: $('wTitle').value.trim(), subtitle: $('wSubtitle').value.trim() }
+      : {};
     if (type === 'weather' && !config.city) return toast('Informe a cidade.', true);
     if (type === 'news' && sources.length === 0) return toast('Adicione ao menos uma fonte RSS.', true);
+    if (type === 'announcement' && !config.title) return toast('Informe o título do comunicado.', true);
 
     if (isEdit) {
       await tvApi('/screens/widget/' + existing.id, { method: 'PUT', body: JSON.stringify({ name, config }) });
