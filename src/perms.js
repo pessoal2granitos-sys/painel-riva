@@ -62,6 +62,12 @@ const PADRAO = [
     description: 'Enxerga apenas os indicadores da própria equipe',
     permissions: Object.fromEntries(TODAS.map(k => [k, ['visao', 'vencimentos', 'pendencias', 'cargos', 'exportar'].includes(k)])),
   },
+  {
+    name: 'Diretor', scope: 'all', is_system: 1,
+    description: 'Visão executiva: todos os painéis, comunicados e TV Corporativa, sem mexer em cadastros',
+    permissions: Object.fromEntries(TODAS.map(k =>
+      [k, PAINEIS.some(p => p.chave === k) || ['exportar', 'publicar_avisos', 'tv'].includes(k)])),
+  },
 ];
 
 // Perfil equivalente para usuários criados antes dos perfis existirem.
