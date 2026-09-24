@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Riva TV — Player</title>
+<style>
+  :root {
+    --riva-navy: #1b4a63;
+    --riva-navy-dark: #0f2c3c;
+    --riva-orange: #f28c28;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    background: #000;
+    overflow: hidden;
+    font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  }
+  #stage {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    background: #000;
+  }
+  .screen {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    transition: opacity 0.6s ease;
+  }
+  .screen.visible { opacity: 1; }
+
+  /* flexbox "gap" não existe no WebView do Android 7 (Chromium 52); usamos margem no filho seguinte. */
+  .brand-screen > * + * { margin-top: 22px; }
+
+  /* Slides de mídia (imagem/vídeo): tela cheia, sem nenhum elemento por cima. */
+  .media {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: #000;
+  }
+
+  /* Base visual das telas de widget (clima, notícias, relógio, tela de espera) */
+  .brand-screen {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    text-align: center;
+    background:
+      radial-gradient(ellipse at top, rgba(255,255,255,0.06) 0%, transparent 60%),
+      linear-gradient(160deg, var(--riva-navy) 0%, var(--riva-navy-dark) 100%);
+  }
+  .brand-logo {
+    width: 180px;
+    max-width: 30vw;
+    background: #fff;
+    border-radius: 14px;
+    padding: 14px 20px;
+    position: absolute;
+    top: 32px;
+    left: 32px;
+  }
+  .accent-bar {
+    width: 64px;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--riva-orange);
+  }
+
+  /* Tela de espera */
+  #emptyScreen .brand-logo { position: static; width: 280px; max-width: 55vw; box-shadow: 0 20px 60px rgba(0,0,0,0.35); }
+  #emptyScreen .msg { font-size: 22px; color: #c3d3da; font-weight: 500; }
+
+  /* Tela de relógio (tamanhos fixos calibrados para TVs 1920x1080; clamp()/vw não
+     são confiáveis no WebView do Android 7). */
+  #clockScreen .time { font-size: 160px; font-weight: 800; line-height: 1; letter-spacing: -2px; }
+  #clockScreen .date { font-size: 28px; color: #cfe0e7; font-weight: 500; }
+
+  /* Tela de clima */
+  #weatherScreen .city { font-size: 26px; color: #cfe0e7; font-weight: 600; }
+  #weatherScreen .temp { font-size: 140px; font-weight: 800; color: var(--riva-orange); line-height: 1; }
+  #weatherScreen .desc { font-size: 24px; color: #eef2f4; }
+  #weatherScreen .meta { font-size: 16px; color: #9db3bd; }
+
+  /* Tela de notícias */
+  #newsScreen { justify-content: flex-start; padding: 130px 10vw 80px; align-items: stretch; }
+  #newsScreen .title { font-size: 34px; font-weight: 800; text-align: left; margin-bottom: 8px; }
+  #newsScreen .title .accent-bar { margin: 12px 0 0; }
+  #newsScreen ul { list-style: none; margin: 24px 0 0; padding: 0; display: flex; flex-direction: column; }
+  #newsScreen li + li { margin-top: 18px; }
+  #newsScreen li {
+    text-align: left;
+    font-size: 26px;
+    font-weight: 500;
+    padding-left: 20px;
+    border-left: 4px solid var(--riva-orange);
+  }
+  #newsScreen li .source { display: block; font-size: 15px; font-weight: 700; color: var(--riva-orange); margin-bottom: 4px; letter-spacing: 0.5px; }
+
+  #previewBadge {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    z-index: 20;
+    background: var(--riva-navy);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 6px 14px;
+    border-radius: 999px;
+    letter-spacing: 0.5px;
+  }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <div id="previewBadge" style="display:none;">PRÉ-VISUALIZAÇÃO</div>
+
+    <div id="emptyScreen" class="screen brand-screen visible">
+      <img class="brand-logo" src="/img/logo.png" alt="Riva Stones" />
+      <div class="accent-bar"></div>
+      <div class="msg">Aguardando programação publicada...</div>
+    </div>
+
+    <img id="imageScreen" class="screen media" />
+    <video id="videoScreen" class="screen media" muted playsinline></video>
+
+    <div id="clockScreen" class="screen brand-screen">
+      <img class="brand-logo" src="/img/logo.png" alt="Riva Stones" />
+      <div class="time">--:--</div>
+      <div class="accent-bar"></div>
+      <div class="date">-</div>
+    </div>
+
+    <div id="weatherScreen" class="screen brand-screen">
+      <img class="brand-logo" src="/img/logo.png" alt="Riva Stones" />
+      <div class="city">-</div>
+      <div class="temp">--°</div>
+      <div class="accent-bar"></div>
+      <div class="desc">-</div>
+      <div class="meta"></div>
+    </div>
+
+    <div id="newsScreen" class="screen brand-screen">
+      <img class="brand-logo" src="/img/logo.png" alt="Riva Stones" />
+      <div class="title">Notícias<div class="accent-bar"></div></div>
+      <ul></ul>
+    </div>
+  </div>
+
+<script>
+(function () {
+  const params = new URLSearchParams(location.search);
+  const playlistId = params.get("playlistId");
+  const pathMatch = location.pathname.match(/^\/player\/([^/]+)/);
+  const deviceCode = pathMatch ? pathMatch[1] : null;
+  const isPreview = !!playlistId;
+
+  if (isPreview) document.getElementById("previewBadge").style.display = "block";
+
+  const screens = {
+    empty: document.getElementById("emptyScreen"),
+    image: document.getElementById("imageScreen"),
+    video: document.getElementById("videoScreen"),
+    clock: document.getElementById("clockScreen"),
+    weather: document.getElementById("weatherScreen"),
+    news: document.getElementById("newsScreen"),
+  };
+
+  let items = [];
+  let currentIndex = -1;
+  let currentVersion = null;
+  let advanceTimer = null;
+  let clockTickInterval = null;
+
+  function showScreen(name) {
+    Object.keys(screens).forEach(function (key) {
+      screens[key].classList.toggle("visible", key === name);
+    });
+  }
+
+  function applyPlaylistData(data) {
+    if (data.version === currentVersion && items.length > 0) return;
+    currentVersion = data.version;
+    items = data.items || [];
+    currentIndex = -1;
+    if (items.length === 0) {
+      showScreen("empty");
+    } else {
+      advanceToNext();
+    }
+  }
+
+  function fetchPlaylist() {
+    if (isPreview) {
+      fetch("/api/tv/playlists/" + playlistId + "/preview", { credentials: "include" })
+        .then(function (res) {
+          if (!res.ok) return null;
+          return res.json();
+        })
+        .then(function (data) {
+          if (data) applyPlaylistData(data);
+        })
+        .catch(function () {
+          // Mantém a última programação em tela; não mostra erro.
+        });
+    } else if (deviceCode) {
+      fetch("/api/tv/device/" + deviceCode + "/playlist")
+        .then(function (res) {
+          if (!res.ok) return null;
+          return res.json();
+        })
+        .then(function (payload) {
+          if (payload) applyPlaylistData(payload.playlist || { items: [], version: null });
+        })
+        .catch(function () {
+          // Mantém a última programação em tela; não mostra erro.
+        });
+    }
+  }
+
+  function advanceToNext() {
+    if (advanceTimer) clearTimeout(advanceTimer);
+    if (clockTickInterval) clearInterval(clockTickInterval);
+    if (items.length === 0) return;
+    currentIndex = (currentIndex + 1) % items.length;
+    showItem(items[currentIndex]);
+  }
+
+  function showItem(item) {
+    videoScreen.pause();
+    if (item.type === "video") return showVideo(item);
+    if (item.type === "image") return showImage(item);
+    if (item.type === "clock") return showClockScreen(item);
+    if (item.type === "weather") return showWeatherScreen(item);
+    if (item.type === "news") return showNewsScreen(item);
+    advanceToNext();
+  }
+
+  const imageScreen = screens.image;
+  const videoScreen = screens.video;
+
+  function showImage(item) {
+    imageScreen.onload = function () { showScreen("image"); };
+    imageScreen.src = item.url;
+    const seconds = item.durationSeconds || 10;
+    advanceTimer = setTimeout(advanceToNext, seconds * 1000);
+  }
+
+  function showVideo(item) {
+    videoScreen.src = item.url;
+    videoScreen.onloadeddata = function () { showScreen("video"); };
+    videoScreen.onended = advanceToNext;
+    const playPromise = videoScreen.play();
+    if (playPromise && playPromise.catch) playPromise.catch(function () {});
+  }
+
+  function weatherDescription(code) {
+    if (code === 0) return "Céu limpo";
+    if ([1, 2, 3].includes(code)) return "Parcialmente nublado";
+    if ([45, 48].includes(code)) return "Neblina";
+    if ([51, 53, 55, 61, 63, 65, 80, 81, 82].includes(code)) return "Chuva";
+    if ([71, 73, 75, 85, 86].includes(code)) return "Neve";
+    if ([95, 96, 99].includes(code)) return "Tempestade";
+    return "";
+  }
+
+  function showClockScreen(item) {
+    const el = screens.clock;
+    function tick() {
+      const now = new Date();
+      el.querySelector(".time").textContent = now.toLocaleTimeString("pt-BR", {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      const dateStr = now.toLocaleDateString("pt-BR", {
+        weekday: "long",
+        day: "2-digit",
+        month: "long",
+      });
+      el.querySelector(".date").textContent = dateStr.charAt(0).toUpperCase() + dateStr.slice(1);
+    }
+    tick();
+    clockTickInterval = setInterval(tick, 1000);
+    showScreen("clock");
+    const seconds = item.durationSeconds || 8;
+    advanceTimer = setTimeout(advanceToNext, seconds * 1000);
+  }
+
+  function showWeatherScreen(item) {
+    const el = screens.weather;
+    const seconds = item.durationSeconds || 8;
+
+    fetch("/api/tv/device/widget-data/" + item.contentId)
+      .then(function (res) { return res.json(); })
+      .then(function (payload) {
+        const data = payload.data;
+        if (data && !data.error) {
+          el.querySelector(".city").textContent = data.city;
+          el.querySelector(".temp").textContent = Math.round(data.temperatureC) + "°C";
+          el.querySelector(".desc").textContent = data.description || weatherDescription(data.weatherCode);
+          el.querySelector(".meta").textContent = "Vento " + Math.round(data.windKmh) + " km/h";
+        } else {
+          el.querySelector(".city").textContent = "—";
+          el.querySelector(".temp").textContent = "—";
+          el.querySelector(".desc").textContent = (data && data.error) || "Dados indisponíveis.";
+          el.querySelector(".meta").textContent = "";
+        }
+      })
+      .catch(function () {
+        el.querySelector(".desc").textContent = "Dados indisponíveis.";
+      })
+      .then(function () {
+        showScreen("weather");
+        advanceTimer = setTimeout(advanceToNext, seconds * 1000);
+      });
+  }
+
+  function showNewsScreen(item) {
+    const el = screens.news;
+    const list = el.querySelector("ul");
+    const seconds = item.durationSeconds || 10;
+
+    fetch("/api/tv/device/widget-data/" + item.contentId)
+      .then(function (res) { return res.json(); })
+      .then(function (payload) {
+        const news = (payload.data && payload.data.items) || [];
+        if (news.length === 0) {
+          list.innerHTML = "<li>Nenhuma notícia disponível no momento.</li>";
+          return;
+        }
+        list.innerHTML = news
+          .slice(0, 5)
+          .map(function (n) {
+            return "<li><span class=\"source\">" + n.source + "</span>" + n.title + "</li>";
+          })
+          .join("");
+      })
+      .catch(function () {
+        list.innerHTML = "<li>Nenhuma notícia disponível no momento.</li>";
+      })
+      .then(function () {
+        showScreen("news");
+        advanceTimer = setTimeout(advanceToNext, seconds * 1000);
+      });
+  }
+
+  fetchPlaylist();
+  setInterval(fetchPlaylist, 5000);
+})();
+</script>
+</body>
+</html>

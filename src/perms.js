@@ -26,6 +26,7 @@ const ACOES = [
   { chave: 'exportar',      nome: 'Exportar planilha',     desc: 'Baixar o relatório em Excel' },
   { chave: 'excluir',       nome: 'Excluir definitivamente', desc: 'Apagar colaboradores, empresas, cargos e treinamentos' },
   { chave: 'publicar_avisos', nome: 'Publicar avisos',     desc: 'Criar, editar e retirar os comunicados aos gestores' },
+  { chave: 'tv',              nome: 'TV Corporativa',      desc: 'Cadastrar TVs, enviar conteúdos, montar playlists e publicar' },
 ];
 
 // Perfil usado pelo acesso sem login. É um perfil de verdade, gravado no banco e
@@ -79,7 +80,7 @@ function permsGestorPublico() {
 // Ações que nunca fazem sentido para quem entra sem se identificar, por mais que
 // o perfil seja editado: alterar dados, gerenciar contas ou apagar registros.
 const NEGADAS_SEM_LOGIN = ['lancamentos', 'colaboradores', 'config', 'usuarios',
-                           'perfis', 'importar', 'excluir', 'publicar_avisos'];
+                           'perfis', 'importar', 'excluir', 'publicar_avisos', 'tv'];
 
 module.exports = { PAINEIS, ACOES, TODAS, PADRAO, POR_PAPEL, GESTOR_PUBLICO,
                    permsGestorPublico, NEGADAS_SEM_LOGIN, normalizar };

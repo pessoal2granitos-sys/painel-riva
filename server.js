@@ -29,7 +29,10 @@ app.use(express.json({ limit: '5mb' }));
 
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
+  // O player da TV Corporativa precisa poder ser exibido dentro de um <iframe> na
+  // própria tela de edição de playlist (pré-visualização) — só para esta rota.
+  const isPlayer = req.path === '/player' || req.path.startsWith('/player/');
+  res.setHeader('X-Frame-Options', isPlayer ? 'SAMEORIGIN' : 'DENY');
   res.setHeader('Referrer-Policy', 'same-origin');
   // O painel tem dados de pessoas: não deve ser indexado por buscador nenhum.
   res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
@@ -43,11 +46,14 @@ app.use((req, res, next) => {
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data:",
+    // A TV Corporativa guarda imagens/vídeos publicados no Vercel Blob, um domínio
+    // externo (*.public.blob.vercel-storage.com) — por isso liberado aqui.
+    "img-src 'self' data: https://*.public.blob.vercel-storage.com",
+    "media-src 'self' https://*.public.blob.vercel-storage.com",
     "font-src 'self'",
     "connect-src 'self'",
     "form-action 'self'",
-    "frame-ancestors 'none'",
+    "frame-ancestors " + (isPlayer ? "'self'" : "'none'"),
     "base-uri 'self'",
     "object-src 'none'",
   ].join('; '));
@@ -942,6 +948,12 @@ app.get('/api/export', requirePerm('exportar'), h(async (req, res) => {
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.send(buf);
 }));
+
+// ---- TV Corporativa ----
+require('./src/tv').registerTvRoutes(app, { h, requirePerm });
+app.get(['/player', '/player/:code'], (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'tv-player.html'));
+});
 
 // ---- Páginas ----
 const temSessao = (req) => !!(req.session && (req.session.userId || req.session.convidado));

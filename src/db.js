@@ -186,6 +186,56 @@ CREATE TABLE IF NOT EXISTS profiles (
   permissions TEXT NOT NULL DEFAULT '{}',
   is_system INTEGER NOT NULL DEFAULT 0
 );
+
+-- ---- TV Corporativa ----
+-- Telas (imagem/vídeo enviados, ou widgets de clima/notícias/relógio sem arquivo).
+CREATE TABLE IF NOT EXISTS tv_screens (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('image','video','weather','news','clock')),
+  blob_url TEXT,
+  mime TEXT,
+  size_bytes INTEGER,
+  config TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+-- Cache do dado ao vivo de telas de clima/notícias, para não bater na API
+-- externa a cada consulta do player e para servir instantâneo em serverless.
+CREATE TABLE IF NOT EXISTS tv_screen_cache (
+  screen_id INTEGER PRIMARY KEY REFERENCES tv_screens(id) ON DELETE CASCADE,
+  data TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS tv_devices (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  code TEXT NOT NULL UNIQUE,
+  location TEXT,
+  description TEXT,
+  current_playlist_id INTEGER,
+  last_seen_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS tv_playlists (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS tv_playlist_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  playlist_id INTEGER NOT NULL REFERENCES tv_playlists(id) ON DELETE CASCADE,
+  screen_id INTEGER NOT NULL REFERENCES tv_screens(id) ON DELETE CASCADE,
+  order_index INTEGER NOT NULL,
+  duration_seconds INTEGER NOT NULL DEFAULT 10
+);
+CREATE TABLE IF NOT EXISTS tv_publications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  device_id INTEGER NOT NULL REFERENCES tv_devices(id) ON DELETE CASCADE,
+  playlist_id INTEGER NOT NULL REFERENCES tv_playlists(id) ON DELETE CASCADE,
+  published_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `;
 
 let ready = null;
@@ -252,6 +302,10 @@ function init() {
         }
         if (perm.publicar_avisos === undefined) { // publicar: quem já configura
           perm.publicar_avisos = admin ? true : !!perm.config;
+          mudou = true;
+        }
+        if (perm.tv === undefined) {               // TV corporativa: quem já configura
+          perm.tv = admin ? true : !!perm.config;
           mudou = true;
         }
         if (mudou) await run('UPDATE profiles SET permissions = ? WHERE id = ?', JSON.stringify(perm), p.id);

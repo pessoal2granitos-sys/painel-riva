@@ -261,7 +261,7 @@ function renderTab() {
   const render = { avisos: renderAvisos, visao: renderVisao, vencimentos: renderVencimentos,
                    realizados: renderRealizados, pendencias: renderPendencias,
                    cargos: renderCargos, custo: renderCusto,
-                   qualidade: renderQualidade, admin: renderAdmin }[currentTab];
+                   qualidade: renderQualidade, tv: renderTV, admin: renderAdmin }[currentTab];
   if (render) render();
 }
 
