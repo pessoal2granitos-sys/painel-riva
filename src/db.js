@@ -165,6 +165,11 @@ CREATE TABLE IF NOT EXISTS avisos (
   ativo INTEGER NOT NULL DEFAULT 1,
   fixado INTEGER NOT NULL DEFAULT 0,
   autor TEXT,
+  midia_url TEXT,
+  midia_tipo TEXT,
+  midia_mime TEXT,
+  publico_tipo TEXT NOT NULL DEFAULT 'todos',
+  publico_valor TEXT,
   criado_em TEXT NOT NULL DEFAULT (datetime('now')),
   atualizado_em TEXT
 );
@@ -256,6 +261,15 @@ function init() {
       // Código de recuperação da administradora: gerado por ela mesma, uso único.
       // Sem isso, esquecer a senha exigiria mexer direto no banco.
       if (!userCols.includes('recovery_code_hash')) await run('ALTER TABLE users ADD COLUMN recovery_code_hash TEXT');
+      // Mural de comunicados: mídia anexada e público-alvo (antes só tinha texto p/ todos).
+      const avisosCols = (await all('PRAGMA table_info(avisos)')).map(c => c.name);
+      if (!avisosCols.includes('midia_url')) await run('ALTER TABLE avisos ADD COLUMN midia_url TEXT');
+      if (!avisosCols.includes('midia_tipo')) await run('ALTER TABLE avisos ADD COLUMN midia_tipo TEXT');
+      if (!avisosCols.includes('midia_mime')) await run('ALTER TABLE avisos ADD COLUMN midia_mime TEXT');
+      if (!avisosCols.includes('publico_tipo')) await run("ALTER TABLE avisos ADD COLUMN publico_tipo TEXT NOT NULL DEFAULT 'todos'");
+      if (!avisosCols.includes('publico_valor')) await run('ALTER TABLE avisos ADD COLUMN publico_valor TEXT');
+      // Empresa do usuário: permite mirar comunicados por empresa/unidade.
+      if (!userCols.includes('company_id')) await run('ALTER TABLE users ADD COLUMN company_id INTEGER REFERENCES companies(id)');
       // SQLite não permite alterar um CHECK depois de criado: bancos anteriores à
       // tela de "comunicado" precisam recriar tv_screens com a lista de tipos nova.
       const tvScreensSchema = await get("SELECT sql FROM sqlite_master WHERE type='table' AND name='tv_screens'");

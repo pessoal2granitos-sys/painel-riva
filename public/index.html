@@ -3,42 +3,57 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Painel de Treinamentos — Riva Stones</title>
+  <title>Gestão à Vista — Riva Stones</title>
   <link rel="stylesheet" href="/css/style.css">
   <link rel="icon" type="image/png" href="/img/logo-icone.png">
 </head>
 <body>
-  <header class="topbar">
-    <div class="topbar-row">
-      <span class="logo-chip"><img class="logo" src="/img/logo.png" alt="Riva Stones"></span>
-      <div class="topbar-title">
-        <h1>PAINEL DE TREINAMENTOS NORMATIVOS</h1>
-        <div class="sub" id="headerSub">Carregando…</div>
-      </div>
-      <div class="topbar-spacer"></div>
-      <div class="user-chip">
-        <div class="avatar" id="userAvatar"></div>
-        <div>
-          <div id="userName" style="font-weight:600;color:#fff"></div>
-          <div id="userRole" style="font-size:11px"></div>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <span class="logo-chip"><img class="logo" src="/img/logo.png" alt="Riva Stones"></span>
+        <div class="brand-txt">
+          <h1>GESTÃO À VISTA</h1>
+          <div class="sub" id="headerSub">Carregando…</div>
         </div>
-        <button id="btnMyPassword" title="Trocar minha senha">Senha</button>
-        <button id="btnLogout">Sair</button>
       </div>
-    </div>
-    <nav class="tabs" id="mainTabs">
-      <button data-tab="avisos" data-perm="avisos">📣 Avisos<span class="badge-novos" id="badgeAvisos" style="display:none"></span></button>
-      <button data-tab="visao" data-perm="visao" class="active">Visão Geral</button>
-      <button data-tab="vencimentos" data-perm="vencimentos">Vencimentos</button>
-      <button data-tab="realizados" data-perm="realizados">✅ Realizados</button>
-      <button data-tab="pendencias" data-perm="pendencias">⚠ Pendências e Atenção</button>
-      <button data-tab="cargos" data-perm="cargos">Cargos e Empresas</button>
-      <button data-tab="custo" data-perm="custo">Carga Horária e Custo</button>
-      <button data-tab="qualidade" data-perm="qualidade">Qualidade dos Dados</button>
-      <button data-tab="tv" data-perm="tv">📺 TV Corporativa</button>
-      <button data-tab="admin" class="tab-admin">⚙ Administração</button>
-    </nav>
-  </header>
+
+      <nav id="mainTabs">
+        <div class="nav-group">
+          <div class="nav-group-label">Comunicação</div>
+          <button data-tab="avisos" data-perm="avisos">📣 Mural<span class="badge-novos" id="badgeAvisos" style="display:none"></span></button>
+          <button data-tab="tv" data-perm="tv">📺 TV Corporativa</button>
+        </div>
+        <div class="nav-group">
+          <div class="nav-group-label">Indicadores</div>
+          <button data-tab="visao" data-perm="visao" class="active">📊 Visão Geral</button>
+          <button data-tab="vencimentos" data-perm="vencimentos">⏳ Vencimentos</button>
+          <button data-tab="realizados" data-perm="realizados">✅ Realizados</button>
+          <button data-tab="pendencias" data-perm="pendencias">⚠ Pendências e Atenção</button>
+          <button data-tab="cargos" data-perm="cargos">🏷 Cargos e Empresas</button>
+          <button data-tab="custo" data-perm="custo">💰 Carga Horária e Custo</button>
+          <button data-tab="qualidade" data-perm="qualidade">🔍 Qualidade dos Dados</button>
+        </div>
+        <div class="nav-group">
+          <div class="nav-group-label">Sistema</div>
+          <button data-tab="admin" class="tab-admin">⚙ Administração</button>
+        </div>
+      </nav>
+
+      <div class="sidebar-user">
+        <div class="user-chip">
+          <div class="avatar" id="userAvatar"></div>
+          <div>
+            <div id="userName" style="font-weight:600;color:#fff"></div>
+            <div id="userRole" style="font-size:11px"></div>
+          </div>
+        </div>
+        <div class="sidebar-user-actions">
+          <button id="btnMyPassword" title="Trocar minha senha">Senha</button>
+          <button id="btnLogout">Sair</button>
+        </div>
+      </div>
+    </aside>
 
   <main>
     <!-- Filtros (abas de indicadores) -->
@@ -90,6 +105,7 @@
     <section id="tab-tv" style="display:none"></section>
     <section id="tab-admin" style="display:none"></section>
   </main>
+  </div>
 
   <div class="modal-back" id="modalBack">
     <div class="modal">

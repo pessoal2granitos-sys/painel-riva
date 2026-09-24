@@ -14,6 +14,7 @@ const { buildDataset, todayISO } = require('./src/dataset');
 const { cleanName, toISODate, shortCompanyName, trainingKey } = require('./src/normalize');
 const perms = require('./src/perms');
 const { gerarTabelaPDF } = require('./src/pdf');
+const { handleUpload } = require('@vercel/blob/client');
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -375,26 +376,82 @@ app.get('/api/realizados', requirePerm('realizados'), h(async (req, res) => {
   res.json({ realizados: visiveis, hoje: todayISO() });
 }));
 
-// ---- Avisos aos gestores ----
+// ---- Mural (avisos aos gestores) ----
 const podePublicar = requirePerm('publicar_avisos');
+const MIDIA_TIPOS = ['image', 'video', 'pdf'];
+const PUBLICO_TIPOS = ['todos', 'perfil', 'empresa'];
+
+// Um comunicado com público restrito só aparece pra quem se encaixa nele.
+// Quem publica sempre enxerga tudo, inclusive fora do ar, pra poder editar/gerenciar.
+function avisoVisivelPara(user, aviso) {
+  if (aviso.publico_tipo === 'perfil') {
+    const alvo = JSON.parse(aviso.publico_valor || '[]');
+    return alvo.includes(user.profile_id);
+  }
+  if (aviso.publico_tipo === 'empresa') {
+    const alvo = JSON.parse(aviso.publico_valor || '[]');
+    return user.company_id != null && alvo.includes(user.company_id);
+  }
+  return true;
+}
 
 app.get('/api/avisos', requirePerm('avisos'), h(async (req, res) => {
-  // Quem publica enxerga também os comunicados retirados do ar.
   const todos = req.user.perms.publicar_avisos;
   const linhas = await db.all(
     'SELECT * FROM avisos' + (todos ? '' : ' WHERE ativo = 1') +
     ' ORDER BY fixado DESC, criado_em DESC');
-  res.json({ avisos: linhas, podePublicar: !!todos });
+  const visiveis = todos ? linhas : linhas.filter(a => avisoVisivelPara(req.user, a));
+  res.json({ avisos: visiveis, podePublicar: !!todos });
 }));
+
+// Token de upload direto pro Blob (imagem/vídeo/PDF do comunicado), pelo mesmo
+// motivo da TV Corporativa: a função serverless tem limite de 4,5 MB por requisição.
+app.post('/api/avisos/upload-token', h(async (req, res) => {
+  try {
+    const jsonResponse = await handleUpload({
+      body: req.body,
+      request: req,
+      onBeforeGenerateToken: async () => {
+        const user = await currentUser(req);
+        if (!user || !user.perms.publicar_avisos) throw new Error('Não autorizado.');
+        return {
+          allowedContentTypes: ['image/jpeg', 'image/png', 'image/gif', 'video/mp4', 'application/pdf'],
+          addRandomSuffix: true,
+        };
+      },
+      onUploadCompleted: async () => {},
+    });
+    res.json(jsonResponse);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}));
+
+function validarPublico(body) {
+  const tipo = PUBLICO_TIPOS.includes(body.publico_tipo) ? body.publico_tipo : 'todos';
+  let valor = null;
+  if (tipo !== 'todos') {
+    const lista = Array.isArray(body.publico_valor) ? body.publico_valor.map(Number).filter(Boolean) : [];
+    if (!lista.length) return { error: 'Selecione ao menos um item do público-alvo, ou escolha "Todos".' };
+    valor = JSON.stringify(lista);
+  }
+  return { tipo, valor };
+}
 
 app.post('/api/avisos', podePublicar, h(async (req, res) => {
   const titulo = cleanName(req.body.titulo);
   const texto = String(req.body.texto || '').trim();
   if (!titulo || !texto) return res.status(400).json({ error: 'Preencha o título e o texto do comunicado' });
   const prioridade = ['normal', 'importante', 'urgente'].includes(req.body.prioridade) ? req.body.prioridade : 'normal';
-  const r = await db.run(`INSERT INTO avisos (titulo, texto, prioridade, ativo, fixado, autor)
-    VALUES (?, ?, ?, ?, ?, ?)`,
-    titulo, texto, prioridade, req.body.ativo === false ? 0 : 1, req.body.fixado ? 1 : 0, req.user.name);
+  const midiaTipo = MIDIA_TIPOS.includes(req.body.midia_tipo) ? req.body.midia_tipo : null;
+  const publico = validarPublico(req.body);
+  if (publico.error) return res.status(400).json({ error: publico.error });
+  const r = await db.run(`INSERT INTO avisos
+    (titulo, texto, prioridade, ativo, fixado, autor, midia_url, midia_tipo, midia_mime, publico_tipo, publico_valor)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    titulo, texto, prioridade, req.body.ativo === false ? 0 : 1, req.body.fixado ? 1 : 0, req.user.name,
+    midiaTipo ? (req.body.midia_url || null) : null, midiaTipo, midiaTipo ? (req.body.midia_mime || null) : null,
+    publico.tipo, publico.valor);
   await registrar(req, 'Aviso publicado', { detalhe: titulo });
   res.json({ ok: true, id: r.lastInsertRowid });
 }));
@@ -404,14 +461,27 @@ app.put('/api/avisos/:id', podePublicar, h(async (req, res) => {
   const antes = await db.get('SELECT * FROM avisos WHERE id = ?', id);
   if (!antes) return res.status(404).json({ error: 'Aviso não encontrado' });
   const prioridade = ['normal', 'importante', 'urgente'].includes(req.body.prioridade) ? req.body.prioridade : null;
+  const publico = req.body.publico_tipo !== undefined ? validarPublico(req.body) : null;
+  if (publico && publico.error) return res.status(400).json({ error: publico.error });
+  const midiaTipo = req.body.midia_tipo !== undefined
+    ? (MIDIA_TIPOS.includes(req.body.midia_tipo) ? req.body.midia_tipo : null) : undefined;
   await db.run(`UPDATE avisos SET titulo = COALESCE(?, titulo), texto = COALESCE(?, texto),
     prioridade = COALESCE(?, prioridade), ativo = COALESCE(?, ativo), fixado = COALESCE(?, fixado),
+    midia_url = CASE WHEN ? THEN ? ELSE midia_url END,
+    midia_tipo = CASE WHEN ? THEN ? ELSE midia_tipo END,
+    midia_mime = CASE WHEN ? THEN ? ELSE midia_mime END,
+    publico_tipo = COALESCE(?, publico_tipo), publico_valor = CASE WHEN ? THEN ? ELSE publico_valor END,
     atualizado_em = datetime('now') WHERE id = ?`,
     req.body.titulo ? cleanName(req.body.titulo) : null,
     req.body.texto !== undefined ? String(req.body.texto).trim() : null,
     prioridade,
     req.body.ativo === undefined ? null : (req.body.ativo ? 1 : 0),
-    req.body.fixado === undefined ? null : (req.body.fixado ? 1 : 0), id);
+    req.body.fixado === undefined ? null : (req.body.fixado ? 1 : 0),
+    midiaTipo !== undefined ? 1 : 0, midiaTipo ? (req.body.midia_url || null) : null,
+    midiaTipo !== undefined ? 1 : 0, midiaTipo,
+    midiaTipo !== undefined ? 1 : 0, midiaTipo ? (req.body.midia_mime || null) : null,
+    publico ? publico.tipo : null, publico ? 1 : 0, publico ? publico.valor : null,
+    id);
   await registrar(req, 'Aviso alterado', { detalhe: antes.titulo });
   res.json({ ok: true });
 }));
@@ -812,7 +882,7 @@ app.delete('/api/requirements/:employeeId/:trainingId', podeLancar, h(async (req
 const podeUsuarios = requirePerm('usuarios');
 app.get('/api/users', podeUsuarios, h(async (req, res) => {
   const [users, teams] = await Promise.all([
-    db.all(`SELECT u.id, u.name, u.email, u.role, u.active, u.created_at, u.profile_id,
+    db.all(`SELECT u.id, u.name, u.email, u.role, u.active, u.created_at, u.profile_id, u.company_id,
         p.name AS profile_name, p.scope AS profile_scope
       FROM users u LEFT JOIN profiles p ON p.id = u.profile_id ORDER BY u.name`),
     db.all('SELECT user_id, employee_id FROM team_members'),
@@ -848,8 +918,9 @@ app.post('/api/users', podeUsuarios, h(async (req, res) => {
   try {
     // role fica como campo herdado; quem manda é o perfil. Nunca gravamos 'admin'
     // por aqui — a administradora original é criada só na primeira execução.
-    const r = await db.run('INSERT INTO users (name, email, password_hash, role, profile_id) VALUES (?, ?, ?, ?, ?)',
-      cleanName(name), String(email).trim(), bcrypt.hashSync(String(password), 10), 'gestor', Number(profile_id));
+    const r = await db.run('INSERT INTO users (name, email, password_hash, role, profile_id, company_id) VALUES (?, ?, ?, ?, ?, ?)',
+      cleanName(name), String(email).trim(), bcrypt.hashSync(String(password), 10), 'gestor', Number(profile_id),
+      req.body.company_id ? Number(req.body.company_id) : null);
     const id = r.lastInsertRowid;
     if (check.perfil.scope === 'team' && Array.isArray(req.body.team) && req.body.team.length) {
       await db.batch(req.body.team.map(eid =>
@@ -879,6 +950,9 @@ app.put('/api/users/:id', podeUsuarios, h(async (req, res) => {
   }
   await db.run('UPDATE users SET name = COALESCE(?, name), email = COALESCE(?, email), active = COALESCE(?, active) WHERE id = ?',
     b.name ? cleanName(b.name) : null, b.email ? String(b.email).trim() : null, b.active ?? null, id);
+  if (b.company_id !== undefined) {
+    await db.run('UPDATE users SET company_id = ? WHERE id = ?', b.company_id ? Number(b.company_id) : null, id);
+  }
   if (b.password) {
     await db.run('UPDATE users SET password_hash = ? WHERE id = ?', bcrypt.hashSync(String(b.password), 10), id);
   }

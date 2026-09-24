@@ -590,6 +590,16 @@ function dataAviso(a) {
   return (a.atualizado_em ? 'atualizado em ' : 'publicado em ') + (q || '');
 }
 
+const PUBLICO_LABEL = { todos: 'Geral', perfil: 'Liderança/Perfil', empresa: 'Por empresa' };
+
+function midiaHtml(a) {
+  if (!a.midia_url) return '';
+  if (a.midia_tipo === 'image') return `<div class="aviso-midia"><img src="${esc(a.midia_url)}" loading="lazy"></div>`;
+  if (a.midia_tipo === 'video') return `<div class="aviso-midia"><video src="${esc(a.midia_url)}" controls preload="metadata"></video></div>`;
+  if (a.midia_tipo === 'pdf') return `<div class="aviso-midia aviso-midia-pdf"><a href="${esc(a.midia_url)}" target="_blank" rel="noopener">📄 Abrir PDF anexado</a></div>`;
+  return '';
+}
+
 async function renderAvisos() {
   const dados = await api('/api/avisos');
   AVISOS = dados.avisos;
@@ -602,6 +612,7 @@ async function renderAvisos() {
       <div class="aviso-topo">
         <span class="aviso-tag" style="background:${p.fundo};color:${p.cor}">${p.rotulo}</span>
         ${a.fixado ? '<span class="aviso-tag" style="background:#e8eef5;color:var(--navy)">📌 Fixado</span>' : ''}
+        ${a.publico_tipo !== 'todos' ? `<span class="aviso-tag" style="background:#fff1e0;color:var(--orange)">🎯 ${PUBLICO_LABEL[a.publico_tipo]}</span>` : ''}
         ${a.ativo ? '' : '<span class="aviso-tag" style="background:#eceff3;color:var(--muted)">Fora do ar</span>'}
         <div style="flex:1"></div>
         ${publica ? `<button class="btn-mini" onclick="editarAviso(${a.id})">Editar</button>
@@ -609,15 +620,16 @@ async function renderAvisos() {
       </div>
       <h3 class="aviso-titulo">${esc(a.titulo)}</h3>
       <div class="aviso-texto">${esc(a.texto)}</div>
+      ${midiaHtml(a)}
       <div class="aviso-rodape">${esc(dataAviso(a))}${a.autor ? ' · por ' + esc(a.autor) : ''}</div>
     </div>`;
   };
 
   $('tab-avisos').innerHTML = `
     <div class="admin-head">
-      <h2>📣 Avisos e Comunicados</h2>
+      <h2>📣 Mural de Comunicação</h2>
       <span class="hint">${publica
-        ? 'Publicados aqui, ficam visíveis para todos os gestores.'
+        ? 'Publique posts, vídeos ou PDFs para todos ou para um público específico.'
         : 'Comunicados da administração.'}</span>
       ${publica ? '<button class="btn-primary" onclick="editarAviso(null)">+ Novo comunicado</button>' : ''}
     </div>
@@ -647,14 +659,21 @@ function marcarAvisosLidos(ativos) {
   if (selo) selo.style.display = 'none';
 }
 
-window.editarAviso = (id) => {
+window.editarAviso = async (id) => {
   const a = id ? AVISOS.find(x => x.id === id) : null;
+  const { profiles } = await api('/api/profiles');
+  let midia = a && a.midia_url ? { url: a.midia_url, tipo: a.midia_tipo, mime: a.midia_mime } : null;
+  const publicoValorAtual = a && a.publico_valor ? JSON.parse(a.publico_valor) : [];
+
   openModal(a ? 'Editar comunicado' : 'Novo comunicado', `
     <label>Título</label>
     <input id="mTitulo" value="${esc(a?.titulo || '')}" placeholder="ex.: Turma de NR-35 em setembro">
     <label>Texto do comunicado</label>
-    <textarea id="mTexto" rows="7" placeholder="Escreva aqui a mensagem que os gestores vão ler.">${esc(a?.texto || '')}</textarea>
-    <div class="row2">
+    <textarea id="mTexto" rows="6" placeholder="Escreva aqui a mensagem.">${esc(a?.texto || '')}</textarea>
+    <label>Anexo (opcional)</label>
+    <input type="file" id="mArquivo" accept="image/jpeg,image/png,image/gif,video/mp4,application/pdf">
+    <div id="mMidiaPreview" style="margin-top:8px">${midia ? midiaPreviewHtml(midia) : ''}</div>
+    <div class="row2" style="margin-top:10px">
       <div><label>Prioridade</label>
         <select id="mPrioridade">
           <option value="normal" ${!a || a.prioridade === 'normal' ? 'selected' : ''}>Informativo</option>
@@ -663,26 +682,88 @@ window.editarAviso = (id) => {
         </select></div>
       <div><label>Exibição</label>
         <select id="mAtivo">
-          <option value="1" ${!a || a.ativo ? 'selected' : ''}>Visível aos gestores</option>
+          <option value="1" ${!a || a.ativo ? 'selected' : ''}>Visível</option>
           <option value="0" ${a && !a.ativo ? 'selected' : ''}>Fora do ar (rascunho)</option>
         </select></div>
     </div>
-    <label style="display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0">
+    <label>Público-alvo</label>
+    <select id="mPublicoTipo">
+      <option value="todos" ${!a || a.publico_tipo === 'todos' ? 'selected' : ''}>Todos</option>
+      <option value="perfil" ${a && a.publico_tipo === 'perfil' ? 'selected' : ''}>Por perfil (ex.: Liderança)</option>
+      <option value="empresa" ${a && a.publico_tipo === 'empresa' ? 'selected' : ''}>Por empresa</option>
+    </select>
+    <div id="mPublicoValor" style="margin-top:8px"></div>
+    <label style="display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0;margin-top:10px">
       <input type="checkbox" id="mFixado" style="width:auto;accent-color:var(--orange)" ${a && a.fixado ? 'checked' : ''}>
       Fixar no topo da lista
     </label>`,
     [{ label: 'Publicar', cls: 'btn-primary', onClick: async () => {
+      const publico_tipo = $('mPublicoTipo').value;
+      const publico_valor = publico_tipo === 'todos' ? [] :
+        [...document.querySelectorAll('.mPublicoItem:checked')].map(c => Number(c.value));
       const body = {
         titulo: $('mTitulo').value, texto: $('mTexto').value,
         prioridade: $('mPrioridade').value,
         ativo: $('mAtivo').value === '1', fixado: $('mFixado').checked,
+        publico_tipo, publico_valor,
+        midia_url: midia ? midia.url : null, midia_tipo: midia ? midia.tipo : null, midia_mime: midia ? midia.mime : null,
       };
       if (!body.titulo.trim() || !body.texto.trim()) return toast('Preencha título e texto', true);
+      if (publico_tipo !== 'todos' && !publico_valor.length) return toast('Selecione ao menos um item do público-alvo', true);
       if (a) await api('/api/avisos/' + a.id, { method: 'PUT', body: JSON.stringify(body) });
       else await api('/api/avisos', { method: 'POST', body: JSON.stringify(body) });
       closeModal(); toast('Comunicado salvo'); renderAvisos();
     } }], 'media');
+
+  const desenharPublicoValor = () => {
+    const tipo = $('mPublicoTipo').value;
+    const box = $('mPublicoValor');
+    if (tipo === 'perfil') {
+      box.innerHTML = '<div class="hint" style="margin-bottom:6px">Marque os perfis que devem ver este comunicado:</div>' +
+        profiles.map(p => `<label style="display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0;margin-bottom:4px">
+          <input type="checkbox" class="mPublicoItem" value="${p.id}" style="width:auto;accent-color:var(--orange)" ${publicoValorAtual.includes(p.id) ? 'checked' : ''}>
+          ${esc(p.name)}</label>`).join('');
+    } else if (tipo === 'empresa') {
+      box.innerHTML = '<div class="hint" style="margin-bottom:6px">Marque as empresas que devem ver este comunicado:</div>' +
+        DS.companies.map(c => `<label style="display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0;margin-bottom:4px">
+          <input type="checkbox" class="mPublicoItem" value="${c.id}" style="width:auto;accent-color:var(--orange)" ${publicoValorAtual.includes(c.id) ? 'checked' : ''}>
+          ${esc(c.short_name || c.name)}</label>`).join('');
+    } else {
+      box.innerHTML = '';
+    }
+  };
+  desenharPublicoValor();
+  $('mPublicoTipo').onchange = desenharPublicoValor;
+
+  $('mArquivo').onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const tipo = file.type.startsWith('image/') ? 'image' : file.type === 'video/mp4' ? 'video' : file.type === 'application/pdf' ? 'pdf' : null;
+    if (!tipo) return toast('Use imagem (JPG/PNG/GIF), vídeo MP4 ou PDF.', true);
+    $('mMidiaPreview').innerHTML = '<div class="hint">Enviando…</div>';
+    try {
+      const blob = await VercelBlobClient.upload(file.name, file, {
+        access: 'public',
+        handleUploadUrl: '/api/avisos/upload-token',
+        contentType: file.type,
+      });
+      midia = { url: blob.url, tipo, mime: file.type };
+      $('mMidiaPreview').innerHTML = midiaPreviewHtml(midia);
+    } catch (err) {
+      $('mMidiaPreview').innerHTML = '';
+      toast(err.message || 'Falha no upload.', true);
+    }
+  };
+
+  window.__removerMidiaAviso = () => { midia = null; $('mMidiaPreview').innerHTML = ''; };
 };
+
+function midiaPreviewHtml(midia) {
+  const remover = `<button type="button" class="btn-mini danger" onclick="window.__removerMidiaAviso()" style="margin-top:6px">Remover anexo</button>`;
+  if (midia.tipo === 'image') return `<img src="${esc(midia.url)}" style="max-width:220px;max-height:140px;border-radius:8px;display:block">${remover}`;
+  if (midia.tipo === 'video') return `<video src="${esc(midia.url)}" style="max-width:220px;max-height:140px;border-radius:8px;display:block" controls></video>${remover}`;
+  return `<div>📄 PDF anexado</div>${remover}`;
+}
 
 window.excluirAviso = async (id) => {
   const a = AVISOS.find(x => x.id === id);
@@ -2366,6 +2447,11 @@ window.editUser = (u, teamIds = []) => {
       <div><label>${isNew ? 'Senha' : 'Nova senha (vazio = manter)'}</label>
         <input type="text" id="mSenha" placeholder="mínimo 6 caracteres"></div>
     </div>
+    <label>Empresa (usada para direcionar comunicados por empresa)</label>
+    <select id="mEmpresaUser">
+      <option value="">Nenhuma específica</option>
+      ${DS.companies.map(c => `<option value="${c.id}" ${u && u.company_id === c.id ? 'selected' : ''}>${esc(c.short_name || c.name)}</option>`).join('')}
+    </select>
     <p class="hint" id="mPerfilDesc"></p>
     ${ehPrincipal ? '<p class="hint" style="color:var(--amber)">Esta é a administradora principal: o perfil dela não pode ser alterado.</p>' : ''}
     ${!isNew ? `<label style="display:flex;align-items:center;gap:8px;text-transform:none"><input type="checkbox" id="mAtivo" style="width:auto;accent-color:var(--orange)" ${u.active ? 'checked' : ''}> Usuário ativo (desmarque para bloquear o acesso)</label>` : ''}
@@ -2375,7 +2461,8 @@ window.editUser = (u, teamIds = []) => {
       <div class="checklist" id="teamList"></div>
     </div>`,
     [{ label: 'Salvar', cls: 'btn-primary', onClick: async () => {
-      const body = { name: $('mNome').value, email: $('mEmail').value, profile_id: Number($('mPerfil').value) };
+      const body = { name: $('mNome').value, email: $('mEmail').value, profile_id: Number($('mPerfil').value),
+        company_id: $('mEmpresaUser').value ? Number($('mEmpresaUser').value) : null };
       if ($('mSenha').value) body.password = $('mSenha').value;
       if (!isNew) body.active = $('mAtivo').checked ? 1 : 0;
       const perfil = PERFIS.find(p => p.id === Number($('mPerfil').value));
