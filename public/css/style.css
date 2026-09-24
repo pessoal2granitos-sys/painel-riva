@@ -43,6 +43,17 @@ input, select, textarea { font-family: inherit; font-size: 13px; }
   border-bottom: 4px solid var(--orange);
 }
 .login-card .logo-wrap img { height: 112px; display: block; }
+/* Efeito de balão: flutua e balança suavemente, dando sensação de imersão. */
+.logo-float { animation: logoFloat 4.5s ease-in-out infinite; }
+.logo-float img { animation: logoSway 4.5s ease-in-out infinite; }
+@keyframes logoFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+@keyframes logoSway {
+  0%, 100% { transform: rotate(-1.5deg); }
+  50% { transform: rotate(1.5deg); }
+}
 .login-card h1 { font-size: 17px; color: var(--navy); text-align: center; margin-bottom: 4px; }
 .login-card p.sub { text-align: center; color: var(--muted); font-size: 12.5px; margin-bottom: 24px; }
 .login-card label { display: block; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 14px 0 5px; }
