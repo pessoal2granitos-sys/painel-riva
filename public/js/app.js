@@ -258,6 +258,12 @@ function renderTab() {
   const alvo = $('tab-' + currentTab);
   if (!alvo) return;
   alvo.style.display = '';
+  // Reaplica a animação de entrada a cada troca de aba (não só na primeira
+  // vez) — remover e forçar reflow antes de reativar a classe é o jeito de
+  // fazer o navegador rodar a mesma animação CSS de novo.
+  alvo.classList.remove('fade-in');
+  void alvo.offsetWidth;
+  alvo.classList.add('fade-in');
   const render = { avisos: renderAvisos, visao: renderVisao, vencimentos: renderVencimentos,
                    realizados: renderRealizados, pendencias: renderPendencias,
                    cargos: renderCargos, custo: renderCusto,
