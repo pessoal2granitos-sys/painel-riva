@@ -309,11 +309,18 @@ function openWidgetModal(existing) {
       $('wAddSource').onclick = () => {
         const name = $('wSourceName').value.trim();
         const url = $('wSourceUrl').value.trim();
-        if (!name || !url) return;
+        if (!name && !url) return toast('Preencha o nome e o link do feed RSS.', true);
+        if (!name) return toast('Dê um nome pra essa fonte (ex: G1).', true);
+        if (!url) return toast('Cole o link do feed RSS.', true);
+        if (!/^https?:\/\//i.test(url)) return toast('O link precisa começar com http:// ou https://', true);
         sources.push({ name, url });
         $('wSourceName').value = ''; $('wSourceUrl').value = '';
         renderSourcesList();
+        toast('Fonte adicionada — clique em Salvar pra confirmar.');
       };
+      ['wSourceName', 'wSourceUrl'].forEach((id) => {
+        $(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('wAddSource').click(); } });
+      });
     }
     if (type === 'announcement') {
       document.querySelectorAll('.rte-btn').forEach((b) => {
