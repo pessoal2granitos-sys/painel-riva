@@ -325,6 +325,21 @@ function init() {
           ALTER TABLE tv_screen_cache_fixed RENAME TO tv_screen_cache;
         `);
       }
+      // As duas tabelas "_broken_20260924" acima (cópias vazias, guardadas só por
+      // precaução) ainda têm uma referência de chave estrangeira pendurada em
+      // "tv_screens_old" e outra ligada de verdade a tv_playlists — isso fazia o
+      // SQLite travar ao tentar apagar qualquer playlist, mesmo sem nenhuma relação
+      // real com o problema. Como são cópias vazias e não usadas em lugar nenhum do
+      // sistema, ficam sem nenhuma restrição de chave estrangeira.
+      // Essas cópias de segurança nunca são lidas por nenhuma rota do sistema —
+      // eram só uma precaução, e uma tentativa anterior de resolver isso deixou uma
+      // leva extra ("_x") igualmente pendurada. Remove todas de vez.
+      for (const nome of ['tv_playlist_items_broken_20260924', 'tv_playlist_items_broken_20260924_v2',
+                           'tv_playlist_items_broken_20260924_x', 'tv_screen_cache_broken_20260924',
+                           'tv_screen_cache_broken_20260924_v2', 'tv_screen_cache_broken_20260924_x']) {
+        const existe = await get("SELECT name FROM sqlite_master WHERE type='table' AND name = ?", nome);
+        if (existe) await run('DROP TABLE ' + nome);
+      }
 
       // Cria os perfis padrão e liga os usuários antigos ao perfil equivalente.
       const { PADRAO, POR_PAPEL, GESTOR_PUBLICO, permsGestorPublico } = require('./perms');
