@@ -190,12 +190,19 @@ async function renderOrgCalendario() {
   const offset = primeiroDia.getDay();
 
   let celulas = '';
+  let uteisSemSabado = 0, uteisComSabado = 0;
   for (let i = 0; i < offset; i++) celulas += '<div class="org-cal-cell vazia"></div>';
   for (let dia = 1; dia <= diasNoMes; dia++) {
-    const data = orgYmd(new Date(ORG_CAL_ANO, ORG_CAL_MES, dia));
+    const dataObj = new Date(ORG_CAL_ANO, ORG_CAL_MES, dia);
+    const data = orgYmd(dataObj);
+    const diaSemana = dataObj.getDay(); // 0=dom, 6=sáb
     const feriado = feriadosMap.get(data);
     const tarefas = cardsPorData.get(data) || [];
     const hoje = orgYmd(new Date()) === data;
+    if (!feriado && diaSemana !== 0) {
+      uteisComSabado++;
+      if (diaSemana !== 6) uteisSemSabado++;
+    }
     celulas += `
       <div class="org-cal-cell ${hoje ? 'hoje' : ''}" data-data="${data}">
         <div class="org-cal-dia">${dia}</div>
@@ -208,6 +215,10 @@ async function renderOrgCalendario() {
     <div class="admin-head">
       <h2>📅 Calendário</h2>
       <span class="hint">Feriados nacionais, do Espírito Santo e de Colatina — mais suas tarefas com prazo.</span>
+    </div>
+    <div class="kpis">
+      ${kpi('Dias úteis (seg–sex)', fmtN(uteisSemSabado), 'sem contar sábados, domingos e feriados')}
+      ${kpi('Dias úteis (seg–sáb)', fmtN(uteisComSabado), 'contando sábados, sem domingos e feriados', 'orange')}
     </div>
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
