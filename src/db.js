@@ -112,6 +112,8 @@ CREATE TABLE IF NOT EXISTS employees (
   demissao TEXT,
   active INTEGER NOT NULL DEFAULT 1,
   departamento TEXT,
+  cpf TEXT,
+  codigo_acesso TEXT,
   UNIQUE(name, company_id)
 );
 CREATE TABLE IF NOT EXISTS trails (
@@ -271,6 +273,49 @@ CREATE TABLE IF NOT EXISTS hr_payroll (
   criado_em TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(nome_planilha, mes_ref)
 );
+
+-- ---- Universidade Corporativa ----
+-- Curso > Módulo (trilha) > Aula, igual ao padrão de plataforma de curso que
+-- a administradora pediu. Anexos (PDF) ficam à parte pra uma aula poder ter
+-- mais de um. O colaborador entra por um login próprio (CPF + código), bem
+-- mais simples que o login administrativo — só enxerga os próprios cursos.
+CREATE TABLE IF NOT EXISTS uni_courses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  titulo TEXT NOT NULL,
+  descricao TEXT,
+  capa_url TEXT,
+  tipo TEXT NOT NULL DEFAULT 'capacitacao',
+  ativo INTEGER NOT NULL DEFAULT 1,
+  ordem INTEGER NOT NULL DEFAULT 100,
+  criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS uni_modules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  course_id INTEGER NOT NULL REFERENCES uni_courses(id) ON DELETE CASCADE,
+  titulo TEXT NOT NULL,
+  ordem INTEGER NOT NULL DEFAULT 100
+);
+CREATE TABLE IF NOT EXISTS uni_lessons (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  module_id INTEGER NOT NULL REFERENCES uni_modules(id) ON DELETE CASCADE,
+  titulo TEXT NOT NULL,
+  conteudo TEXT,
+  video_url TEXT,
+  ordem INTEGER NOT NULL DEFAULT 100,
+  criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS uni_lesson_files (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  lesson_id INTEGER NOT NULL REFERENCES uni_lessons(id) ON DELETE CASCADE,
+  nome TEXT NOT NULL,
+  url TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS uni_progress (
+  employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  lesson_id INTEGER NOT NULL REFERENCES uni_lessons(id) ON DELETE CASCADE,
+  concluida_em TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (employee_id, lesson_id)
+);
 `;
 
 let ready = null;
@@ -288,6 +333,9 @@ function init() {
       if (!cargoCols.includes('trail_source_id')) await run('ALTER TABLE cargos ADD COLUMN trail_source_id INTEGER REFERENCES cargos(id)');
       const empCols = (await all('PRAGMA table_info(employees)')).map(c => c.name);
       if (!empCols.includes('departamento')) await run('ALTER TABLE employees ADD COLUMN departamento TEXT');
+      if (!empCols.includes('cpf')) await run('ALTER TABLE employees ADD COLUMN cpf TEXT');
+      // Login enxuto do colaborador na Universidade Corporativa: CPF + este código.
+      if (!empCols.includes('codigo_acesso')) await run('ALTER TABLE employees ADD COLUMN codigo_acesso TEXT');
       const userCols = (await all('PRAGMA table_info(users)')).map(c => c.name);
       if (!userCols.includes('profile_id')) await run('ALTER TABLE users ADD COLUMN profile_id INTEGER REFERENCES profiles(id)');
       // Código de recuperação da administradora: gerado por ela mesma, uso único.
@@ -452,6 +500,10 @@ function init() {
         }
         if (perm.pessoas === undefined) {           // RH: dado sensível, só a administradora por padrão
           perm.pessoas = admin;
+          mudou = true;
+        }
+        if (perm.universidade === undefined) {      // Gerir cursos: quem já configura o sistema
+          perm.universidade = admin ? true : !!perm.config;
           mudou = true;
         }
         if (mudou) await run('UPDATE profiles SET permissions = ? WHERE id = ?', JSON.stringify(perm), p.id);

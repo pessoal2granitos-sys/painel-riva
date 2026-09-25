@@ -1034,6 +1034,12 @@ app.get(['/player', '/player/:code'], (req, res) => {
 // ---- Gestão de Pessoas (RH) ----
 require('./src/hr').registerHrRoutes(app, { h, requirePerm, currentUser });
 
+// ---- Universidade Corporativa ----
+require('./src/universidade').registerUniversidadeRoutes(app, { h, requirePerm, currentUser });
+app.get('/universidade', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'universidade.html'));
+});
+
 // ---- Páginas ----
 const temSessao = (req) => !!(req.session && (req.session.userId || req.session.convidado));
 // A página do painel é servida só por estas rotas, nunca pelo diretório estático:

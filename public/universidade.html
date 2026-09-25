@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Universidade Corporativa — Riva Stones</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="icon" type="image/png" href="/img/logo-icone.png">
+  <style>
+    body { background: var(--bg); }
+    .uni-shell { max-width: 1100px; margin: 0 auto; padding: 24px 20px 60px; }
+    .uni-header { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
+    .uni-header img { height: 40px; }
+    .uni-header .titulo { flex: 1; }
+    .uni-header h1 { font-size: 18px; color: var(--navy); }
+    .uni-header .sub { font-size: 12px; color: var(--muted); }
+    .uni-progress-track { background: #eef1f5; border-radius: 20px; height: 8px; overflow: hidden; margin-top: 8px; }
+    .uni-progress-fill { height: 100%; background: linear-gradient(90deg, var(--orange), var(--orange-dark)); border-radius: 20px; transition: width .4s; }
+    .uni-course-card { cursor: pointer; }
+    .uni-lesson-item {
+      display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; cursor: pointer;
+      font-size: 13.5px; transition: background .12s;
+    }
+    .uni-lesson-item:hover { background: #f3f6f9; }
+    .uni-lesson-item.ativa { background: #eef3f8; font-weight: 700; }
+    .uni-lesson-check { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--line); flex: 0 0 auto; display: flex; align-items: center; justify-content: center; font-size: 11px; }
+    .uni-lesson-check.feita { background: var(--green); border-color: var(--green); color: #fff; }
+    .uni-content-body { font-size: 15px; line-height: 1.7; }
+    .uni-anexo-link {
+      display: inline-flex; align-items: center; gap: 8px; background: #eef3f8; border-radius: 9px;
+      padding: 9px 14px; margin: 6px 8px 0 0; color: var(--navy); font-weight: 600; font-size: 13px; text-decoration: none;
+    }
+    .uni-anexo-link:hover { background: #dfe9f2; }
+    .login-body .login-card { animation: fadeInUp .5s var(--ease) both; }
+  </style>
+</head>
+<body class="login-body" id="uniBody">
+  <div class="login-card" id="uniLoginCard">
+    <div class="logo-wrap"><img src="/img/logo-vertical.png" alt="Riva Stones"></div>
+    <h1>Universidade Corporativa</h1>
+    <p class="sub">Entre com seu CPF e o código de acesso que o RH te passou.</p>
+    <label>CPF</label>
+    <input type="text" id="uCpf" inputmode="numeric" placeholder="Só números">
+    <label>Código de acesso</label>
+    <input type="text" id="uCodigo" placeholder="Ex: A1B2C3" style="text-transform:uppercase">
+    <button class="btn-primary" id="btnUniEntrar">Entrar</button>
+    <div class="login-error" id="uniLoginError"></div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <div class="modal-back" id="modalBack">
+    <div class="modal"><div class="m-head"><h3 id="modalTitle"></h3><button id="modalClose">×</button></div>
+      <div class="m-body" id="modalBody"></div><div class="m-foot" id="modalFoot"></div></div>
+  </div>
+  <div class="modal-back" id="confirmBack" style="z-index:150">
+    <div class="modal" style="width:420px"><div class="m-head"><h3 id="confirmTitle">Confirmar</h3></div>
+      <div class="m-body"><p id="confirmMsg" style="font-size:13.5px;line-height:1.6;white-space:pre-line"></p></div>
+      <div class="m-foot"><button class="btn-ghost" id="confirmNao">Cancelar</button><button class="btn-primary" id="confirmSim">Confirmar</button></div>
+    </div>
+  </div>
+
+<script>
+'use strict';
+function $(id) { return document.getElementById(id); }
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function toast(msg, isError) {
+  const t = $('toast'); t.textContent = msg; t.className = 'toast show' + (isError ? ' error' : '');
+  clearTimeout(window.__toastTimer); window.__toastTimer = setTimeout(() => t.classList.remove('show'), 3500);
+}
+function openModal(title, bodyHTML, buttons, largura) {
+  const caixa = document.querySelector('#modalBack .modal');
+  caixa.className = 'modal' + (largura ? ' ' + largura : '');
+  $('modalTitle').textContent = title; $('modalBody').innerHTML = bodyHTML; $('modalFoot').innerHTML = '';
+  (buttons || []).forEach((b) => {
+    const btn = document.createElement('button');
+    btn.className = b.cls || 'btn-primary'; btn.textContent = b.label;
+    btn.addEventListener('click', () => b.onClick());
+    $('modalFoot').appendChild(btn);
+  });
+  $('modalBack').classList.add('open');
+}
+function closeModal() { $('modalBack').classList.remove('open'); }
+$('modalClose').addEventListener('click', closeModal);
+
+async function api(url, opts) {
+  const res = await fetch(url, Object.assign({ headers: { 'Content-Type': 'application/json' } }, opts));
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Erro inesperado.');
+  return data;
+}
+
+let ME = null;
+let CURSOS = [];
+let CURSO_ATUAL = null;
+let AULA_ATUAL = null;
+
+$('btnUniEntrar').onclick = async () => {
+  const cpf = $('uCpf').value.trim();
+  const codigo = $('uCodigo').value.trim();
+  $('uniLoginError').style.display = 'none';
+  try {
+    const r = await api('/api/uni/login', { method: 'POST', body: JSON.stringify({ cpf, codigo }) });
+    ME = { nome: r.nome };
+    iniciarPortal();
+  } catch (err) {
+    $('uniLoginError').textContent = err.message;
+    $('uniLoginError').style.display = 'block';
+  }
+};
+['uCpf', 'uCodigo'].forEach((id) => {
+  $(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnUniEntrar').click(); });
+});
+
+async function iniciarPortal() {
+  document.body.className = '';
+  document.body.style.background = '';
+  document.body.innerHTML = `
+    <div class="uni-shell">
+      <div class="uni-header">
+        <img src="/img/logo.png" alt="Riva Stones">
+        <div class="titulo">
+          <h1>Universidade Corporativa</h1>
+          <div class="sub">Olá, ${esc(ME.nome)}</div>
+        </div>
+        <button class="btn-ghost" id="btnUniSair">Sair</button>
+      </div>
+      <div id="uniConteudo"><p class="hint">Carregando seus cursos…</p></div>
+    </div>
+    <div class="toast" id="toast"></div>
+    <div class="modal-back" id="modalBack">
+      <div class="modal"><div class="m-head"><h3 id="modalTitle"></h3><button id="modalClose">×</button></div>
+        <div class="m-body" id="modalBody"></div><div class="m-foot" id="modalFoot"></div></div>
+    </div>`;
+  $('modalClose').addEventListener('click', closeModal);
+  $('btnUniSair').onclick = async () => { await api('/api/uni/logout', { method: 'POST' }); location.reload(); };
+  await renderCursos();
+}
+
+async function renderCursos() {
+  CURSOS = await api('/api/uni/meus-cursos');
+  const el = $('uniConteudo');
+  el.innerHTML = `
+    <div class="grid cols-3">
+      ${CURSOS.map((c) => {
+        const pct = c.totalAulas ? Math.round(c.aulasFeitas / c.totalAulas * 100) : 0;
+        return `<div class="card uni-course-card" style="padding:0;overflow:hidden" data-id="${c.id}">
+          <div style="background:#eef2f4;aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;overflow:hidden">
+            ${c.capaUrl ? `<img src="${esc(c.capaUrl)}" style="width:100%;height:100%;object-fit:cover">` : '<div style="font-size:38px">🎓</div>'}
+          </div>
+          <div style="padding:14px">
+            <span class="badge ${c.tipo === 'obrigatorio' ? 'vencido' : 'role'}">${c.tipo === 'obrigatorio' ? 'Obrigatório' : 'Capacitação'}</span>
+            <div style="font-weight:700;font-size:14.5px;margin:8px 0 4px">${esc(c.titulo)}</div>
+            <div style="font-size:12px;color:var(--muted)">${esc(c.descricao || '')}</div>
+            <div class="uni-progress-track"><div class="uni-progress-fill" style="width:${pct}%"></div></div>
+            <div style="font-size:11.5px;color:var(--muted);margin-top:4px">${c.aulasFeitas}/${c.totalAulas} aula(s) concluída(s)</div>
+          </div>
+        </div>`;
+      }).join('') || '<p class="hint">Nenhum curso disponível no momento.</p>'}
+    </div>`;
+  el.querySelectorAll('.uni-course-card').forEach((card) => {
+    card.onclick = () => abrirCurso(card.dataset.id);
+  });
+}
+
+async function abrirCurso(id) {
+  CURSO_ATUAL = await api('/api/uni/aluno/courses/' + id);
+  AULA_ATUAL = null;
+  for (const m of CURSO_ATUAL.modulos) {
+    for (const a of m.aulas) { if (!AULA_ATUAL) AULA_ATUAL = a; }
+  }
+  renderCurso();
+}
+
+function renderCurso() {
+  const c = CURSO_ATUAL;
+  const el = $('uniConteudo');
+  el.innerHTML = `
+    <button class="btn-ghost" id="btnVoltarCursos" style="margin-bottom:14px">← Voltar aos cursos</button>
+    <div class="grid cols-3">
+      <div class="card" style="grid-column:span 1;max-height:70vh;overflow-y:auto">
+        <h3>${esc(c.titulo)}</h3>
+        ${c.modulos.map((m) => `
+          <div style="margin-bottom:14px">
+            <div style="font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:6px">${esc(m.titulo)}</div>
+            ${m.aulas.map((a) => `
+              <div class="uni-lesson-item ${AULA_ATUAL && AULA_ATUAL.id === a.id ? 'ativa' : ''}" data-aula="${a.id}">
+                <div class="uni-lesson-check ${a.concluida ? 'feita' : ''}">${a.concluida ? '✓' : ''}</div>
+                <span>${esc(a.titulo)}</span>
+              </div>`).join('')}
+          </div>`).join('')}
+      </div>
+      <div class="card" style="grid-column:span 2" id="uniAulaPainel"></div>
+    </div>`;
+  $('btnVoltarCursos').onclick = () => { CURSO_ATUAL = null; renderCursos(); };
+  el.querySelectorAll('.uni-lesson-item').forEach((row) => {
+    row.onclick = () => {
+      for (const m of c.modulos) {
+        const found = m.aulas.find((a) => String(a.id) === row.dataset.aula);
+        if (found) AULA_ATUAL = found;
+      }
+      renderCurso();
+    };
+  });
+  renderAulaPainel();
+}
+
+function renderAulaPainel() {
+  const a = AULA_ATUAL;
+  const painel = $('uniAulaPainel');
+  if (!a) { painel.innerHTML = '<p class="hint">Selecione uma aula ao lado.</p>'; return; }
+  painel.innerHTML = `
+    <h3 style="margin-bottom:12px">${esc(a.titulo)}</h3>
+    ${a.videoUrl ? `<video src="${esc(a.videoUrl)}" controls style="width:100%;border-radius:10px;margin-bottom:16px;background:#000"></video>` : ''}
+    <div class="uni-content-body">${a.conteudo || ''}</div>
+    ${a.arquivos.length ? `<div style="margin-top:18px">${a.arquivos.map((f) =>
+      `<a class="uni-anexo-link" href="${esc(f.url)}" target="_blank" rel="noopener">📄 ${esc(f.nome)}</a>`).join('')}</div>` : ''}
+    <div style="margin-top:22px">
+      <button class="btn-primary" id="btnMarcarConcluida" ${a.concluida ? 'disabled' : ''}>${a.concluida ? '✓ Aula concluída' : 'Marcar como concluída'}</button>
+    </div>`;
+  if (!a.concluida) {
+    $('btnMarcarConcluida').onclick = async () => {
+      await api('/api/uni/aluno/lessons/' + a.id + '/concluir', { method: 'POST' });
+      toast('Aula marcada como concluída!');
+      CURSO_ATUAL = await api('/api/uni/aluno/courses/' + CURSO_ATUAL.id);
+      const found = CURSO_ATUAL.modulos.flatMap((m) => m.aulas).find((x) => x.id === a.id);
+      AULA_ATUAL = found;
+      renderCurso();
+    };
+  }
+}
+
+// Se a sessão já estiver ativa (recarregou a página), pula direto pro portal.
+api('/api/uni/me').then((me) => { ME = me; ME.nome = me.nome; iniciarPortal(); }).catch(() => {});
+</script>
+</body>
+</html>
