@@ -11,6 +11,15 @@
         ],
         "createdAt": "2026-09-25T21:35:50.097Z",
         "reason": "img#imageScreen has no static src by design — src is set dynamically via JS only when the playlist shows an image item; pre-existing pattern, not a broken/forgotten image"
+      },
+      {
+        "rule": "buried-raster",
+        "value": "*",
+        "files": [
+          "public/tv-player.html"
+        ],
+        "createdAt": "2026-09-25T21:38:52.557Z",
+        "reason": "opacity:0/.visible toggle on .screen is the intentional crossfade transition mechanism between playlist items (image/video/widgets), controlled at runtime by JS class toggling — not an abandoned buried image"
       }
     ]
   }
