@@ -460,6 +460,15 @@
 
   fetchPlaylist();
   setInterval(fetchPlaylist, 5000);
+
+  // A página só busca a PROGRAMAÇÃO nova a cada 5s — o próprio código js
+  // (tipos de tela novos, correções, etc.) só chega quando a página é
+  // recarregada de fato. Como a TV fica ligada dias a fio sem ninguém
+  // reabrir o app, recarrega sozinha de tempos em tempos pra nunca ficar
+  // rodando uma versão velha do player. Ignora na pré-visualização do painel.
+  if (!isPreview) {
+    setTimeout(function () { location.reload(); }, 6 * 60 * 60 * 1000);
+  }
 })();
 </script>
 </body>
