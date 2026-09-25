@@ -118,14 +118,18 @@
   #birthdaysScreen .bday-titulo { font-size: 40px; font-weight: 800; text-align: left; }
   #birthdaysScreen .bday-titulo .accent-bar { margin: 14px 0 0; }
   #birthdaysScreen .bday-lista {
-    margin-top: 26px; display: flex; flex-direction: column; overflow: hidden; max-height: 68vh;
+    margin-top: 26px; display: flex; flex-direction: column; max-height: 68vh;
+    /* Tamanho e espaçamento ajustados por JS (--bday-font/--bday-pad) conforme a
+       quantidade de aniversariantes, pra NUNCA cortar ninguém da lista — numa TV
+       não tem como rolar a tela pra ver o resto. */
+    --bday-font: 30px; --bday-pad: 14px;
   }
   #birthdaysScreen .bday-item {
-    display: flex; align-items: center; text-align: left; font-size: 30px; font-weight: 600;
-    padding: 14px 0; border-bottom: 1px solid rgba(255,255,255,0.14);
+    display: flex; align-items: center; text-align: left; font-size: var(--bday-font); font-weight: 600;
+    padding: var(--bday-pad) 0; border-bottom: 1px solid rgba(255,255,255,0.14);
   }
   #birthdaysScreen .bday-dia {
-    flex: 0 0 auto; width: 84px; font-size: 26px; font-weight: 800; color: var(--riva-orange);
+    flex: 0 0 auto; width: 84px; font-size: calc(var(--bday-font) - 4px); font-weight: 800; color: var(--riva-orange);
   }
   #birthdaysScreen .bday-nome { flex: 1 1 auto; }
   #birthdaysScreen .bday-hoje {
@@ -438,6 +442,15 @@
     el.querySelector(".bday-titulo").firstChild.textContent = "Aniversariantes de " + MESES_ANO[mesAtual - 1];
 
     const listaEl = el.querySelector(".bday-lista");
+    // Encolhe fonte/espaçamento conforme a quantidade, pra caber todo mundo sem
+    // cortar ninguém — numa TV não tem como rolar a tela pra ver o resto da lista.
+    // (bug antigo: altura fixa com overflow:hidden escondia quem passasse de ~6.)
+    const n = doMes.length;
+    const fonte = n <= 7 ? 30 : Math.max(15, Math.round(30 * 7 / n));
+    const espaco = n <= 7 ? 14 : Math.max(4, Math.round(14 * 7 / n));
+    listaEl.style.setProperty("--bday-font", fonte + "px");
+    listaEl.style.setProperty("--bday-pad", espaco + "px");
+
     // innerHTML = "" e montagem via DOM (não string), pra nome vindo de planilha
     // nunca virar HTML/script — mesmo cuidado que teria com qualquer texto externo.
     listaEl.innerHTML = "";
