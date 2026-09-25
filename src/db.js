@@ -197,7 +197,7 @@ CREATE TABLE IF NOT EXISTS profiles (
 CREATE TABLE IF NOT EXISTS tv_screens (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
-  type TEXT NOT NULL CHECK (type IN ('image','video','weather','news','clock','announcement')),
+  type TEXT NOT NULL CHECK (type IN ('image','video','weather','news','clock','announcement','birthdays')),
   blob_url TEXT,
   mime TEXT,
   size_bytes INTEGER,
@@ -280,7 +280,28 @@ function init() {
           CREATE TABLE tv_screens (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
-            type TEXT NOT NULL CHECK (type IN ('image','video','weather','news','clock','announcement')),
+            type TEXT NOT NULL CHECK (type IN ('image','video','weather','news','clock','announcement','birthdays')),
+            blob_url TEXT,
+            mime TEXT,
+            size_bytes INTEGER,
+            config TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+          );
+          INSERT INTO tv_screens SELECT * FROM tv_screens_old;
+          DROP TABLE tv_screens_old;
+          PRAGMA foreign_keys = ON;
+        `);
+      }
+      // Mesma situação, desta vez para liberar o tipo "aniversariantes".
+      const tvScreensSchema2 = await get("SELECT sql FROM sqlite_master WHERE type='table' AND name='tv_screens'");
+      if (tvScreensSchema2 && !tvScreensSchema2.sql.includes('birthdays')) {
+        await client.executeMultiple(`
+          PRAGMA foreign_keys = OFF;
+          ALTER TABLE tv_screens RENAME TO tv_screens_old;
+          CREATE TABLE tv_screens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            type TEXT NOT NULL CHECK (type IN ('image','video','weather','news','clock','announcement','birthdays')),
             blob_url TEXT,
             mime TEXT,
             size_bytes INTEGER,

@@ -310,9 +310,11 @@ main { max-width: 1440px; margin: 0 auto; padding: 22px 28px 60px; }
 .rte-btn:hover { border-color: var(--orange); }
 .rte-sep { width: 1px; height: 20px; background: var(--line); margin: 0 2px; }
 .rte-editable {
-  width: 100%; min-height: 44px; padding: 9px 11px; border: 1.5px solid var(--line); border-top: none;
-  border-radius: 0 0 9px 9px; font-size: 13px; background: #fff; outline: none;
+  width: 100%; min-height: 120px; max-height: 50vh; overflow-y: auto; padding: 12px 14px;
+  border: 1.5px solid var(--line); border-top: none; border-radius: 0 0 9px 9px;
+  font-size: 15px; line-height: 1.5; background: #fff; outline: none; resize: vertical;
 }
+#wSubtitle.rte-editable { min-height: 70px; }
 .rte-editable:focus { border-color: var(--orange); }
 .rte-editable:empty::before { content: attr(data-placeholder); color: var(--muted); }
 

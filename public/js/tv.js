@@ -6,9 +6,9 @@ let TV_SCREENS = [];
 let TV_DEVICES = [];
 let TV_PLAYLISTS = [];
 
-const WIDGET_ICON = { weather: '☀️', news: '📰', clock: '🕒', announcement: '📢' };
-const WIDGET_LABEL = { weather: 'Clima', news: 'Notícias', clock: 'Relógio', announcement: 'Comunicado' };
-const WIDGET_TYPES = ['weather', 'news', 'clock', 'announcement'];
+const WIDGET_ICON = { weather: '☀️', news: '📰', clock: '🕒', announcement: '📢', birthdays: '🎂' };
+const WIDGET_LABEL = { weather: 'Clima', news: 'Notícias', clock: 'Relógio', announcement: 'Comunicado', birthdays: 'Aniversariantes' };
+const WIDGET_TYPES = ['weather', 'news', 'clock', 'announcement', 'birthdays'];
 const isWidget = (t) => WIDGET_TYPES.includes(t);
 
 async function tvApi(url, opts) {
@@ -197,6 +197,7 @@ function openWidgetModal(existing) {
   const isEdit = !!existing;
   let type = existing ? existing.type : 'weather';
   let sources = (existing && existing.config && existing.config.sources) || [];
+  let birthdays = (existing && existing.config && existing.config.birthdays) || [];
 
   function body() {
     return `
@@ -210,7 +211,7 @@ function openWidgetModal(existing) {
         </div>` : ''}
       <label>Nome da tela</label>
       <input class="inp" id="wName" value="${esc((existing && existing.name) || '')}"
-        placeholder="${type === 'weather' ? 'Previsão do Tempo' : type === 'news' ? 'Notícias do dia' : type === 'announcement' ? 'Comunicado RH — Setembro' : 'Relógio'}">
+        placeholder="${type === 'weather' ? 'Previsão do Tempo' : type === 'news' ? 'Notícias do dia' : type === 'announcement' ? 'Comunicado RH — Setembro' : type === 'birthdays' ? 'Aniversariantes do mês' : 'Relógio'}">
       <div id="wConfigArea"></div>
     `;
   }
@@ -254,7 +255,38 @@ function openWidgetModal(existing) {
         <div class="rte-editable" id="wSubtitle" contenteditable="true" data-placeholder="Ex: Às 10h no auditório">${subtitle}</div>
         <p style="color:var(--muted);margin-top:10px;font-size:12.5px">Aparece em tela cheia com a identidade visual da Riva — mesmo estilo das telas de clima e relógio.</p>`;
     }
+    if (type === 'birthdays') {
+      return `
+        <label>Planilha de aniversariantes (.xlsx)</label>
+        <input type="file" class="inp" id="wBirthdayFile" accept=".xlsx,.xls">
+        <p style="color:var(--muted);margin:6px 0 0;font-size:12.5px">
+          A planilha precisa ter uma coluna com o <b>nome</b> e outra com a <b>data</b> (dia e mês — o ano é ignorado).
+          Também aceita colunas separadas "Dia" e "Mês".</p>
+        <div id="wBirthdayPreview" style="margin-top:12px"></div>
+        <p style="color:var(--muted);margin-top:10px;font-size:12.5px">Na TV, mostra só quem faz aniversário no mês atual, atualizando sozinho todo mês.</p>`;
+    }
     return `<p style="color:var(--muted);margin-top:10px">Sem configuração adicional — mostra data e hora atualizadas automaticamente.</p>`;
+  }
+
+  function renderBirthdayPreview() {
+    const box = $('wBirthdayPreview');
+    if (!box) return;
+    if (!birthdays.length) {
+      box.innerHTML = '<p style="color:var(--muted);font-size:13px">Nenhuma planilha importada ainda.</p>';
+      return;
+    }
+    const MESES = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
+    box.innerHTML = `<p style="font-size:12.5px;color:var(--muted);margin-bottom:6px">${birthdays.length} pessoa(s) importada(s):</p>` +
+      `<div class="checklist" style="max-height:180px">` +
+      birthdays.map((b, i) => `
+        <div style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:4px">
+          <span style="color:var(--muted);width:50px">${String(b.day).padStart(2, '0')}/${MESES[b.month - 1]}</span>
+          <b style="flex:1">${esc(b.name)}</b>
+          <button class="btn-mini tv-rm-bday" data-i="${i}" style="color:var(--red)">Remover</button>
+        </div>`).join('') + `</div>`;
+    box.querySelectorAll('.tv-rm-bday').forEach((b) => {
+      b.onclick = () => { birthdays.splice(Number(b.dataset.i), 1); renderBirthdayPreview(); };
+    });
   }
 
   function renderSourcesList() {
@@ -293,6 +325,27 @@ function openWidgetModal(existing) {
         });
       });
     }
+    if (type === 'birthdays') {
+      renderBirthdayPreview();
+      $('wBirthdayFile').onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const fd = new FormData();
+        fd.append('file', file);
+        $('wBirthdayPreview').innerHTML = '<p style="color:var(--muted);font-size:13px">Lendo planilha…</p>';
+        try {
+          const res = await fetch('/api/tv/screens/parse-birthdays', { method: 'POST', body: fd });
+          const data = await res.json();
+          if (!res.ok) { toast(data.error || 'Falha ao ler a planilha.', true); renderBirthdayPreview(); return; }
+          birthdays = data.birthdays;
+          renderBirthdayPreview();
+          toast(birthdays.length + ' aniversariante(s) importado(s).');
+        } catch {
+          toast('Falha ao enviar a planilha.', true);
+          renderBirthdayPreview();
+        }
+      };
+    }
   }
 
   $('modalTitle').textContent = isEdit ? 'Editar tela' : 'Criar tela';
@@ -311,10 +364,12 @@ function openWidgetModal(existing) {
     const config = type === 'weather' ? { city: $('wCity').value.trim() }
       : type === 'news' ? { sources }
       : type === 'announcement' ? { title: $('wTitle').innerHTML.trim(), subtitle: $('wSubtitle').innerHTML.trim() }
+      : type === 'birthdays' ? { birthdays }
       : {};
     if (type === 'weather' && !config.city) return toast('Informe a cidade.', true);
     if (type === 'news' && sources.length === 0) return toast('Adicione ao menos uma fonte RSS.', true);
     if (type === 'announcement' && !$('wTitle').textContent.trim()) return toast('Informe o título do comunicado.', true);
+    if (type === 'birthdays' && birthdays.length === 0) return toast('Importe uma planilha com pelo menos um aniversariante.', true);
 
     if (isEdit) {
       await tvApi('/screens/widget/' + existing.id, { method: 'PUT', body: JSON.stringify({ name, config }) });

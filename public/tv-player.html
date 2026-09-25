@@ -113,6 +113,26 @@
   #announcementScreen .title { font-size: 64px; font-weight: 800; line-height: 1.15; }
   #announcementScreen .subtitle { font-size: 28px; color: #cfe0e7; font-weight: 500; line-height: 1.4; }
 
+  /* Tela de aniversariantes do mês */
+  #birthdaysScreen { justify-content: flex-start; padding: 100px 10vw 80px; align-items: stretch; }
+  #birthdaysScreen .bday-titulo { font-size: 40px; font-weight: 800; text-align: left; }
+  #birthdaysScreen .bday-titulo .accent-bar { margin: 14px 0 0; }
+  #birthdaysScreen .bday-lista {
+    margin-top: 26px; display: flex; flex-direction: column; overflow: hidden; max-height: 68vh;
+  }
+  #birthdaysScreen .bday-item {
+    display: flex; align-items: center; text-align: left; font-size: 30px; font-weight: 600;
+    padding: 14px 0; border-bottom: 1px solid rgba(255,255,255,0.14);
+  }
+  #birthdaysScreen .bday-dia {
+    flex: 0 0 auto; width: 84px; font-size: 26px; font-weight: 800; color: var(--riva-orange);
+  }
+  #birthdaysScreen .bday-nome { flex: 1 1 auto; }
+  #birthdaysScreen .bday-hoje {
+    flex: 0 0 auto; font-size: 20px; font-weight: 800; color: var(--riva-orange); margin-left: 16px;
+  }
+  #birthdaysScreen .bday-vazio { font-size: 26px; color: #9db3bd; font-weight: 500; padding: 20px 0; }
+
   #previewBadge {
     position: absolute;
     top: 20px;
@@ -169,6 +189,12 @@
       <div class="accent-bar"></div>
       <div class="subtitle">-</div>
     </div>
+
+    <div id="birthdaysScreen" class="screen brand-screen">
+      <img class="brand-logo" src="/img/logo.png" alt="Riva Stones" />
+      <div class="bday-titulo">Aniversariantes<div class="accent-bar"></div></div>
+      <div class="bday-lista"></div>
+    </div>
   </div>
 
 <script>
@@ -189,6 +215,7 @@
     weather: document.getElementById("weatherScreen"),
     news: document.getElementById("newsScreen"),
     announcement: document.getElementById("announcementScreen"),
+    birthdays: document.getElementById("birthdaysScreen"),
   };
 
   let items = [];
@@ -259,6 +286,7 @@
     if (item.type === "weather") return showWeatherScreen(item);
     if (item.type === "news") return showNewsScreen(item);
     if (item.type === "announcement") return showAnnouncementScreen(item);
+    if (item.type === "birthdays") return showBirthdaysScreen(item);
     advanceToNext();
   }
 
@@ -376,6 +404,56 @@
     el.querySelector(".title").innerHTML = config.title || "";
     el.querySelector(".subtitle").innerHTML = config.subtitle || "";
     showScreen("announcement");
+    const seconds = item.durationSeconds || 10;
+    advanceTimer = setTimeout(advanceToNext, seconds * 1000);
+  }
+
+  const MESES_ANO = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+  function pad2(n) { return (n < 10 ? "0" : "") + n; }
+
+  function showBirthdaysScreen(item) {
+    const el = screens.birthdays;
+    const config = item.config || {};
+    const lista = Array.isArray(config.birthdays) ? config.birthdays : [];
+    const hoje = new Date();
+    const mesAtual = hoje.getMonth() + 1;
+    const doMes = lista.filter(function (b) { return Number(b.month) === mesAtual; })
+      .sort(function (a, b) { return Number(a.day) - Number(b.day); });
+
+    el.querySelector(".bday-titulo").firstChild.textContent = "Aniversariantes de " + MESES_ANO[mesAtual - 1];
+
+    const listaEl = el.querySelector(".bday-lista");
+    // innerHTML = "" e montagem via DOM (não string), pra nome vindo de planilha
+    // nunca virar HTML/script — mesmo cuidado que teria com qualquer texto externo.
+    listaEl.innerHTML = "";
+    if (doMes.length === 0) {
+      const vazio = document.createElement("div");
+      vazio.className = "bday-vazio";
+      vazio.textContent = "Nenhum aniversariante este mês";
+      listaEl.appendChild(vazio);
+    } else {
+      doMes.forEach(function (b) {
+        const row = document.createElement("div");
+        row.className = "bday-item";
+        const dia = document.createElement("span");
+        dia.className = "bday-dia";
+        dia.textContent = pad2(Number(b.day)) + "/" + pad2(mesAtual);
+        const nome = document.createElement("span");
+        nome.className = "bday-nome";
+        nome.textContent = b.name || "";
+        row.appendChild(dia);
+        row.appendChild(nome);
+        if (Number(b.day) === hoje.getDate()) {
+          const selo = document.createElement("span");
+          selo.className = "bday-hoje";
+          selo.textContent = "🎉 Hoje!";
+          row.appendChild(selo);
+        }
+        listaEl.appendChild(row);
+      });
+    }
+    showScreen("birthdays");
     const seconds = item.durationSeconds || 10;
     advanceTimer = setTimeout(advanceToNext, seconds * 1000);
   }

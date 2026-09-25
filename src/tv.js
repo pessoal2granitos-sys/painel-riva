@@ -6,11 +6,13 @@
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
+const XLSX = require('xlsx');
 const { handleUpload } = require('@vercel/blob/client');
 
 const db = require('./db');
+const { cleanName } = require('./normalize');
 
-const WIDGET_TYPES = ['weather', 'news', 'clock', 'announcement'];
+const WIDGET_TYPES = ['weather', 'news', 'clock', 'announcement', 'birthdays'];
 const MEDIA_TYPES = ['image', 'video'];
 const CACHE_MS = 15 * 60 * 1000;
 
@@ -58,6 +60,22 @@ function sanitizeAnnouncementConfig(config) {
     title: sanitizeRichText(config.title || ''),
     subtitle: sanitizeRichText(config.subtitle || ''),
   };
+}
+
+// A lista de aniversariantes vem de planilha, não do editor de texto: nomes vão
+// como texto puro (o player monta a tela via DOM, nunca via innerHTML deles),
+// mas os campos ainda passam por uma limpeza para não gravar lixo no banco.
+function sanitizeBirthdaysConfig(config) {
+  const lista = (config && Array.isArray(config.birthdays)) ? config.birthdays : [];
+  const out = [];
+  for (const b of lista) {
+    const name = cleanName(String((b && b.name) || '').slice(0, 120));
+    const day = Number(b && b.day);
+    const month = Number(b && b.month);
+    if (!name || !day || !month || day < 1 || day > 31 || month < 1 || month > 12) continue;
+    out.push({ name, day, month });
+  }
+  return { birthdays: out };
 }
 
 // Em produção (Vercel) os arquivos vão para o Vercel Blob, porque o disco da
@@ -246,6 +264,61 @@ function registerTvRoutes(app, { h, requirePerm, currentUser }) {
     res.status(201).json(serializeScreen(row));
   }));
 
+  // Lê a planilha de aniversariantes (nome + data) e devolve a lista já validada.
+  // Não grava nada — quem chama decide o que fazer com o resultado (a tela de
+  // "Criar/Editar tela" usa isso pra montar a pré-visualização antes de salvar).
+  app.post('/api/tv/screens/parse-birthdays', guard, upload.single('file'), h(async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'Envie um arquivo .xlsx ou .xls.' });
+    let linhas;
+    try {
+      const wb = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      linhas = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+    } catch {
+      return res.status(400).json({ error: 'Não consegui ler esse arquivo. Envie uma planilha .xlsx válida.' });
+    }
+    const pega = (row, ...chaves) => {
+      for (const k of Object.keys(row)) {
+        if (chaves.includes(k.trim().toLowerCase())) return row[k];
+      }
+      return undefined;
+    };
+    const out = [];
+    for (const row of linhas) {
+      const nome = cleanName(pega(row, 'nome', 'colaborador', 'funcionário', 'funcionario') || '');
+      if (!nome) continue;
+      let dia = null, mes = null;
+      const dataRaw = pega(row, 'data', 'aniversário', 'aniversario', 'data de nascimento', 'nascimento');
+      if (dataRaw instanceof Date && !isNaN(dataRaw)) {
+        dia = dataRaw.getDate(); mes = dataRaw.getMonth() + 1;
+      } else if (typeof dataRaw === 'string' && dataRaw.trim()) {
+        const m = dataRaw.trim().match(/^(\d{1,2})[\/\-.](\d{1,2})/);
+        if (m) { dia = Number(m[1]); mes = Number(m[2]); }
+      } else if (typeof dataRaw === 'number') {
+        // Data em serial do Excel (dias desde 1899-12-30).
+        const d = new Date(Math.round((dataRaw - 25569) * 86400 * 1000));
+        if (!isNaN(d)) { dia = d.getUTCDate(); mes = d.getUTCMonth() + 1; }
+      }
+      if (dia == null) {
+        const diaRaw = pega(row, 'dia');
+        if (diaRaw !== undefined && diaRaw !== '') dia = Number(diaRaw);
+      }
+      if (mes == null) {
+        const mesRaw = pega(row, 'mês', 'mes');
+        if (mesRaw !== undefined && mesRaw !== '') mes = Number(mesRaw);
+      }
+      if (!dia || !mes || dia < 1 || dia > 31 || mes < 1 || mes > 12) continue;
+      out.push({ name: nome, day: dia, month: mes });
+    }
+    if (!out.length) {
+      return res.status(400).json({
+        error: 'Não encontrei nomes e datas válidos. Use uma coluna "Nome" e uma coluna "Data" (ou "Dia" e "Mês").',
+      });
+    }
+    out.sort((a, b) => a.month - b.month || a.day - b.day);
+    res.json({ birthdays: out });
+  }));
+
   // ---- Biblioteca de telas ----
   app.get('/api/tv/screens', guard, h(async (req, res) => {
     const rows = await db.all('SELECT * FROM tv_screens ORDER BY created_at DESC');
@@ -272,9 +345,13 @@ function registerTvRoutes(app, { h, requirePerm, currentUser }) {
     const { type, name, config } = req.body;
     if (!WIDGET_TYPES.includes(type)) return res.status(400).json({ error: 'Tipo de tela inválido.' });
     if (!name || !name.trim()) return res.status(400).json({ error: 'Dê um nome para a tela.' });
-    const configFinal = type === 'announcement' ? sanitizeAnnouncementConfig(config) : config;
+    const configFinal = type === 'announcement' ? sanitizeAnnouncementConfig(config)
+      : type === 'birthdays' ? sanitizeBirthdaysConfig(config) : config;
     if (type === 'announcement' && !(configFinal.title || '').replace(/<[^>]*>/g, '').trim()) {
       return res.status(400).json({ error: 'Informe o título do comunicado.' });
+    }
+    if (type === 'birthdays' && configFinal.birthdays.length === 0) {
+      return res.status(400).json({ error: 'Importe uma planilha com pelo menos um aniversariante.' });
     }
     const r = await db.run('INSERT INTO tv_screens (name, type, config) VALUES (?, ?, ?)',
       name.trim(), type, JSON.stringify(configFinal || {}));
@@ -286,7 +363,11 @@ function registerTvRoutes(app, { h, requirePerm, currentUser }) {
     const existing = await db.get('SELECT * FROM tv_screens WHERE id = ?', req.params.id);
     if (!existing || !WIDGET_TYPES.includes(existing.type)) return res.status(404).json({ error: 'Tela não encontrada.' });
     const { name, config } = req.body;
-    const configFinal = existing.type === 'announcement' ? sanitizeAnnouncementConfig(config) : config;
+    const configFinal = existing.type === 'announcement' ? sanitizeAnnouncementConfig(config)
+      : existing.type === 'birthdays' ? sanitizeBirthdaysConfig(config) : config;
+    if (existing.type === 'birthdays' && configFinal.birthdays.length === 0) {
+      return res.status(400).json({ error: 'Importe uma planilha com pelo menos um aniversariante.' });
+    }
     await db.run('UPDATE tv_screens SET name = ?, config = ? WHERE id = ?',
       (name && name.trim()) || existing.name, JSON.stringify(configFinal || {}), req.params.id);
     await db.run('DELETE FROM tv_screen_cache WHERE screen_id = ?', req.params.id);
