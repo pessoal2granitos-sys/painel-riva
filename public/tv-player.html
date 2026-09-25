@@ -278,8 +278,22 @@
     showItem(items[currentIndex]);
   }
 
+  // Avisa o painel qual item entrou na tela ("o que está passando agora").
+  // Só no player de verdade; falha em silêncio pra nunca travar a exibição.
+  function reportNowPlaying(item) {
+    if (!deviceCode || isPreview) return;
+    try {
+      fetch("/api/tv/device/" + deviceCode + "/now-playing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: item.name || "", type: item.type || "" }),
+      }).catch(function () {});
+    } catch (e) { /* ignora */ }
+  }
+
   function showItem(item) {
     videoScreen.pause();
+    reportNowPlaying(item);
     if (item.type === "video") return showVideo(item);
     if (item.type === "image") return showImage(item);
     if (item.type === "clock") return showClockScreen(item);

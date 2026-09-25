@@ -397,6 +397,8 @@ function registerTvRoutes(app, { h, requirePerm, currentUser }) {
         lastSeenAt: row.last_seen_at,
         online: lastSeenMs !== null && Date.now() - lastSeenMs <= ONLINE_MS,
         currentPlaylist: row.playlist_name ? { id: row.current_playlist_id, name: row.playlist_name } : null,
+        nowPlaying: row.now_playing_name
+          ? { name: row.now_playing_name, type: row.now_playing_type, at: row.now_playing_at } : null,
       };
     }));
   }));
@@ -533,12 +535,20 @@ function registerTvRoutes(app, { h, requirePerm, currentUser }) {
     const currentPlaylists = await db.all(
       `SELECT DISTINCT tv_playlists.id, tv_playlists.name
        FROM tv_devices JOIN tv_playlists ON tv_playlists.id = tv_devices.current_playlist_id`);
+    const playlistNames = new Map(
+      (await db.all('SELECT id, name FROM tv_playlists')).map((p) => [p.id, p.name]));
     res.json({
       totalDevices: devices.length,
       onlineDevices: online.length,
       offlineDevices: devices.length - online.length,
       lastSync,
       currentPlaylists,
+      nowPlaying: devices.map((d) => ({
+        id: d.id, name: d.name, location: d.location, code: d.code,
+        online: online.includes(d),
+        playlist: d.current_playlist_id ? (playlistNames.get(d.current_playlist_id) || null) : null,
+        item: d.now_playing_name ? { name: d.now_playing_name, type: d.now_playing_type, at: d.now_playing_at } : null,
+      })),
     });
   }));
 
@@ -551,7 +561,7 @@ function registerTvRoutes(app, { h, requirePerm, currentUser }) {
 
     const playlist = await db.get('SELECT * FROM tv_playlists WHERE id = ?', tv.current_playlist_id);
     const items = await db.all(
-      `SELECT tv_screens.id AS screen_id, tv_screens.blob_url, tv_screens.type, tv_screens.config,
+      `SELECT tv_screens.id AS screen_id, tv_screens.name, tv_screens.blob_url, tv_screens.type, tv_screens.config,
               tv_playlist_items.duration_seconds
        FROM tv_playlist_items JOIN tv_screens ON tv_screens.id = tv_playlist_items.screen_id
        WHERE tv_playlist_items.playlist_id = ? ORDER BY tv_playlist_items.order_index ASC`, playlist.id);
@@ -560,11 +570,23 @@ function registerTvRoutes(app, { h, requirePerm, currentUser }) {
       playlist: {
         id: playlist.id, version: playlist.version,
         items: items.map((it) => ({
-          contentId: it.screen_id, url: it.blob_url || null, type: it.type,
+          contentId: it.screen_id, name: it.name, url: it.blob_url || null, type: it.type,
           config: it.config ? JSON.parse(it.config) : null, durationSeconds: it.duration_seconds,
         })),
       },
     });
+  }));
+
+  // O player avisa qual item acabou de entrar na tela, pro painel mostrar
+  // "o que está passando agora" em cada TV. Público como as demais rotas do player.
+  app.post('/api/tv/device/:code/now-playing', h(async (req, res) => {
+    const tv = await db.get('SELECT id FROM tv_devices WHERE code = ?', String(req.params.code).toUpperCase());
+    if (!tv) return res.status(404).json({ error: 'TV não cadastrada.' });
+    const name = String((req.body && req.body.name) || '').slice(0, 200);
+    const type = String((req.body && req.body.type) || '').slice(0, 30);
+    await db.run("UPDATE tv_devices SET now_playing_name = ?, now_playing_type = ?, now_playing_at = datetime('now') WHERE id = ?",
+      name || null, type || null, tv.id);
+    res.json({ ok: true });
   }));
 
   app.get('/api/tv/device/widget-data/:screenId', h(async (req, res) => {

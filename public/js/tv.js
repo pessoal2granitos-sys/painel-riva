@@ -54,12 +54,21 @@ async function renderTvDashboard() {
       ${kpi('TVs offline', fmtN(d.offlineDevices), 'sem contato recente', d.offlineDevices ? 'red' : 'green')}
       ${kpi('Última sincronização', lastSync, 'de qualquer TV')}
     </div>
-    <div class="grid cols-2">
-      <div class="card">
-        <h3>Playlists publicadas atualmente</h3>
-        ${d.currentPlaylists.length ? '<ul>' + d.currentPlaylists.map((p) => `<li>${esc(p.name)}</li>`).join('') + '</ul>'
-          : '<p style="color:var(--muted)">Nenhuma playlist publicada ainda.</p>'}
-      </div>
+    <div class="card">
+      <h3>📡 O que está passando agora</h3>
+      ${d.nowPlaying && d.nowPlaying.length ? `<div class="tv-lib-list">` +
+        d.nowPlaying.map((dev) => `
+          <div class="tv-lib-item">
+            <div class="tv-lib-thumb">${dev.item ? (WIDGET_ICON[dev.item.type] || (dev.item.type === 'video' ? '🎬' : '🖼')) : '📴'}</div>
+            <div class="tv-lib-info">
+              <div class="tv-lib-name">${esc(dev.name)}${dev.location ? ' <span style="color:var(--muted);font-weight:400">· ' + esc(dev.location) + '</span>' : ''}</div>
+              <div class="tv-lib-type">${dev.online
+                ? (dev.item ? esc(dev.item.name) + (isWidget(dev.item.type) ? ' · ' + WIDGET_LABEL[dev.item.type] : '') : (dev.playlist ? 'Sincronizando…' : 'Sem playlist publicada'))
+                : 'Offline'}</div>
+            </div>
+            <span class="dot" style="background:${dev.online ? 'var(--green)' : 'var(--red)'}"></span>
+          </div>`).join('') + `</div>`
+        : '<p class="hint">Nenhuma TV cadastrada ainda.</p>'}
     </div>`;
 }
 
@@ -79,7 +88,7 @@ async function renderTvDevices() {
       <div class="card" style="grid-column: span 2">
         <h3>TVs cadastradas</h3>
         <table class="tbl">
-          <thead><tr><th>Nome</th><th>Código</th><th>Status</th><th>Playlist atual</th><th></th></tr></thead>
+          <thead><tr><th>Nome</th><th>Código</th><th>Status</th><th>Playlist atual</th><th>Exibindo agora</th><th></th></tr></thead>
           <tbody>
             ${TV_DEVICES.map((tv) => `
               <tr>
@@ -87,6 +96,7 @@ async function renderTvDevices() {
                 <td><code>${esc(tv.code)}</code></td>
                 <td><span class="dot" style="background:${tv.online ? 'var(--green)' : 'var(--red)'}"></span> ${tv.online ? 'Online' : 'Offline'}</td>
                 <td>${tv.currentPlaylist ? esc(tv.currentPlaylist.name) : '—'}</td>
+                <td>${tv.online && tv.nowPlaying ? esc(tv.nowPlaying.name) : '—'}</td>
                 <td style="text-align:right">
                   <a href="/player/${esc(tv.code)}" target="_blank" style="margin-right:10px">Ver ao vivo</a>
                   <button class="btn-mini tv-del-device" data-id="${tv.id}">Remover</button>
@@ -453,17 +463,26 @@ async function openPlaylistEditor(id) {
       </div>
       <div class="grid cols-3">
         <div class="card">
-          <h3>Biblioteca de conteúdos</h3>
-          <div style="max-height:420px;overflow:auto">
+          <div class="tv-panel-head">
+            <h3>📚 Biblioteca de conteúdos</h3>
+          </div>
+          ${screens.length ? `<div class="tv-lib-list">
             ${screens.map((s) => `
-              <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;border-bottom:1px solid #eee;padding:6px 0">
-                <span>${isWidget(s.type) ? WIDGET_ICON[s.type] + ' ' : ''}${esc(s.name)}</span>
+              <div class="tv-lib-item">
+                <div class="tv-lib-thumb">${isWidget(s.type) ? WIDGET_ICON[s.type] : itemThumb(s)}</div>
+                <div class="tv-lib-info">
+                  <div class="tv-lib-name">${esc(s.name)}</div>
+                  <div class="tv-lib-type">${isWidget(s.type) ? WIDGET_LABEL[s.type] : (s.type === 'image' ? 'Imagem' : 'Vídeo')}</div>
+                </div>
                 <button class="btn-mini tv-add-item" data-id="${s.id}">+ Adicionar</button>
               </div>`).join('')}
-          </div>
+          </div>` : `<p class="hint">Nenhum conteúdo criado ainda — vá em "Conteúdos" pra criar telas ou enviar mídia.</p>`}
         </div>
         <div class="card" style="grid-column:span 2">
-          <h3>Itens da playlist <span style="font-weight:400;color:var(--muted)">(arraste para reordenar)</span></h3>
+          <div class="tv-panel-head">
+            <h3>🎞 Itens da playlist</h3>
+            <span class="hint">(arraste para reordenar)</span>
+          </div>
           <div id="tvItemsList"></div>
         </div>
       </div>
@@ -498,16 +517,15 @@ async function openPlaylistEditor(id) {
 
   function renderItemsList() {
     const box = $('tvItemsList');
-    if (items.length === 0) { box.innerHTML = '<p style="color:var(--muted)">Adicione conteúdos da biblioteca ao lado.</p>'; return; }
+    if (items.length === 0) { box.innerHTML = '<p class="hint">Adicione conteúdos da biblioteca ao lado.</p>'; return; }
     box.innerHTML = items.map((it, i) => `
-      <div class="tv-item-row" draggable="true" data-i="${i}"
-        style="display:flex;align-items:center;gap:10px;border:1px solid #eee;border-radius:8px;padding:8px;margin-bottom:6px;cursor:move;background:#fff">
-        <span style="color:var(--muted);width:18px">${i + 1}</span>
-        <div style="width:64px;height:40px;background:#eef2f4;border-radius:4px;overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center">${itemThumb(it)}</div>
-        <span style="flex:1;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${isWidget(it.type) ? '[' + WIDGET_LABEL[it.type] + '] ' : ''}${esc(it.name)}</span>
-        ${it.type !== 'video' ? `<input type="number" min="1" class="inp tv-item-duration" data-i="${i}" value="${it.durationSeconds}" style="width:60px;text-align:center">s`
-          : '<span style="font-size:12px;color:var(--muted)">até o fim do vídeo</span>'}
-        <button class="btn-mini tv-rm-item" data-i="${i}" style="color:var(--red)">Remover</button>
+      <div class="tv-item-row" draggable="true" data-i="${i}">
+        <div class="tv-item-num">${i + 1}</div>
+        <div class="tv-item-thumb">${itemThumb(it)}</div>
+        <span class="tv-item-name">${isWidget(it.type) ? '<span class="tag">' + WIDGET_LABEL[it.type] + '</span>' : ''}${esc(it.name)}</span>
+        ${it.type !== 'video' ? `<input type="number" min="1" class="inp tv-item-duration" data-i="${i}" value="${it.durationSeconds}" style="width:60px;text-align:center;flex:0 0 auto">s`
+          : '<span style="font-size:12px;color:var(--muted);flex:0 0 auto">até o fim do vídeo</span>'}
+        <button class="btn-mini tv-rm-item" data-i="${i}" style="color:var(--red);flex:0 0 auto">Remover</button>
       </div>`).join('');
 
     box.querySelectorAll('.tv-item-duration').forEach((inp) => {

@@ -219,6 +219,9 @@ CREATE TABLE IF NOT EXISTS tv_devices (
   description TEXT,
   current_playlist_id INTEGER,
   last_seen_at TEXT,
+  now_playing_name TEXT,
+  now_playing_type TEXT,
+  now_playing_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS tv_playlists (
@@ -270,6 +273,11 @@ function init() {
       if (!avisosCols.includes('publico_valor')) await run('ALTER TABLE avisos ADD COLUMN publico_valor TEXT');
       // Empresa do usuário: permite mirar comunicados por empresa/unidade.
       if (!userCols.includes('company_id')) await run('ALTER TABLE users ADD COLUMN company_id INTEGER REFERENCES companies(id)');
+      // "O que está passando agora": o player avisa qual item está na tela.
+      const devCols = (await all('PRAGMA table_info(tv_devices)')).map(c => c.name);
+      if (!devCols.includes('now_playing_name')) await run('ALTER TABLE tv_devices ADD COLUMN now_playing_name TEXT');
+      if (!devCols.includes('now_playing_type')) await run('ALTER TABLE tv_devices ADD COLUMN now_playing_type TEXT');
+      if (!devCols.includes('now_playing_at')) await run('ALTER TABLE tv_devices ADD COLUMN now_playing_at TEXT');
       // SQLite não permite alterar um CHECK depois de criado: bancos anteriores à
       // tela de "comunicado" precisam recriar tv_screens com a lista de tipos nova.
       const tvScreensSchema = await get("SELECT sql FROM sqlite_master WHERE type='table' AND name='tv_screens'");

@@ -298,6 +298,45 @@ main { max-width: 1440px; margin: 0 auto; padding: 22px 28px 60px; }
 .inp:focus { outline: none; border-color: var(--orange); }
 .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; }
 
+/* TV Corporativa: biblioteca de conteúdos e itens da playlist */
+.tv-lib-list { max-height: 460px; overflow-y: auto; margin: 0 -8px; padding: 0 8px; }
+.tv-lib-item {
+  display: flex; align-items: center; gap: 12px; padding: 9px 6px; border-radius: 10px;
+  transition: background .12s;
+}
+.tv-lib-item:hover { background: #f3f6f9; }
+.tv-lib-item + .tv-lib-item { border-top: 1px solid var(--line); }
+.tv-lib-thumb {
+  width: 48px; height: 48px; border-radius: 9px; background: #eef2f4; flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: center; overflow: hidden; font-size: 20px;
+}
+.tv-lib-thumb img, .tv-lib-thumb video { width: 100%; height: 100%; object-fit: cover; }
+.tv-lib-info { flex: 1; min-width: 0; }
+.tv-lib-name { font-size: 13.5px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tv-lib-type { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-top: 1px; }
+
+.tv-panel-head { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+.tv-panel-head h3 { margin: 0; }
+.tv-panel-head .hint { margin: 0; }
+
+.tv-item-row {
+  display: flex; align-items: center; gap: 12px; border: 1.5px solid var(--line); border-radius: 10px;
+  padding: 9px 12px; margin-bottom: 8px; cursor: move; background: #fff; transition: border-color .12s, box-shadow .12s;
+}
+.tv-item-row:hover { border-color: var(--orange); box-shadow: 0 2px 8px rgba(245,134,52,.12); }
+.tv-item-row.dragging { opacity: .4; }
+.tv-item-num {
+  width: 24px; height: 24px; border-radius: 50%; background: var(--navy); color: #fff;
+  font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex: 0 0 auto;
+}
+.tv-item-thumb {
+  width: 60px; height: 40px; border-radius: 7px; background: #eef2f4; overflow: hidden; flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: center; font-size: 18px;
+}
+.tv-item-thumb img, .tv-item-thumb video { width: 100%; height: 100%; object-fit: cover; }
+.tv-item-name { flex: 1; min-width: 0; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tv-item-name .tag { color: var(--orange); font-weight: 700; font-size: 11px; text-transform: uppercase; margin-right: 4px; }
+
 /* Editor de texto simples (título/texto do Comunicado da TV) */
 .rte-toolbar {
   display: flex; align-items: center; gap: 4px; background: #f3f6f9; border: 1.5px solid var(--line);
