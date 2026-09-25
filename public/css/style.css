@@ -298,6 +298,24 @@ main { max-width: 1440px; margin: 0 auto; padding: 22px 28px 60px; }
 .inp:focus { outline: none; border-color: var(--orange); }
 .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; }
 
+/* Editor de texto simples (título/texto do Comunicado da TV) */
+.rte-toolbar {
+  display: flex; align-items: center; gap: 4px; background: #f3f6f9; border: 1.5px solid var(--line);
+  border-bottom: none; border-radius: 9px 9px 0 0; padding: 6px 8px;
+}
+.rte-btn {
+  background: #fff; border: 1px solid var(--line); border-radius: 6px; min-width: 28px; height: 28px;
+  font-size: 13px; font-weight: 700; color: var(--navy); padding: 0 6px;
+}
+.rte-btn:hover { border-color: var(--orange); }
+.rte-sep { width: 1px; height: 20px; background: var(--line); margin: 0 2px; }
+.rte-editable {
+  width: 100%; min-height: 44px; padding: 9px 11px; border: 1.5px solid var(--line); border-top: none;
+  border-radius: 0 0 9px 9px; font-size: 13px; background: #fff; outline: none;
+}
+.rte-editable:focus { border-color: var(--orange); }
+.rte-editable:empty::before { content: attr(data-placeholder); color: var(--muted); }
+
 /* barras horizontais */
 .hbar-row { display: grid; grid-template-columns: minmax(140px, 240px) 1fr 46px; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 12px; }
 .hbar-row .lbl { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

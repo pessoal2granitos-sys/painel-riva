@@ -373,8 +373,8 @@
   function showAnnouncementScreen(item) {
     const el = screens.announcement;
     const config = item.config || {};
-    el.querySelector(".title").textContent = config.title || "";
-    el.querySelector(".subtitle").textContent = config.subtitle || "";
+    el.querySelector(".title").innerHTML = config.title || "";
+    el.querySelector(".subtitle").innerHTML = config.subtitle || "";
     showScreen("announcement");
     const seconds = item.durationSeconds || 10;
     advanceTimer = setTimeout(advanceToNext, seconds * 1000);

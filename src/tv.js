@@ -14,6 +14,52 @@ const WIDGET_TYPES = ['weather', 'news', 'clock', 'announcement'];
 const MEDIA_TYPES = ['image', 'video'];
 const CACHE_MS = 15 * 60 * 1000;
 
+// Sanitiza o HTML do editor de texto do Comunicado (negrito/itálico/sublinhado/
+// cor) antes de gravar — o resultado vai direto pro innerHTML do player na TV
+// e do preview no navegador, então nada além desta lista pode sobreviver.
+const RTE_ALLOWED_TAGS = new Set(['b', 'strong', 'i', 'em', 'u', 'br', 'span', 'div', 'p']);
+function sanitizeStyle(style) {
+  const allowed = new Set(['color', 'background-color', 'font-weight', 'text-decoration']);
+  const out = [];
+  for (const decl of String(style).split(';')) {
+    const m = decl.match(/^\s*([a-zA-Z-]+)\s*:\s*(.+?)\s*$/);
+    if (!m) continue;
+    const prop = m[1].toLowerCase();
+    const val = m[2];
+    if (!allowed.has(prop)) continue;
+    if (/url\(|expression|javascript:/i.test(val)) continue;
+    if (!/^[#a-zA-Z0-9,.\s()%-]+$/.test(val)) continue;
+    out.push(prop + ':' + val);
+  }
+  return out.join(';');
+}
+function sanitizeRichText(html) {
+  if (!html) return '';
+  let s = String(html);
+  s = s.replace(/<(script|style|iframe|object|embed)[^>]*>[\s\S]*?<\/\1>/gi, '');
+  s = s.replace(/<!--[\s\S]*?-->/g, '');
+  s = s.replace(/<\/?([a-zA-Z0-9]+)([^>]*)>/g, (match, tag, attrs) => {
+    const lower = tag.toLowerCase();
+    if (!RTE_ALLOWED_TAGS.has(lower)) return '';
+    if (match.charAt(1) === '/') return '</' + lower + '>';
+    if (lower === 'span') {
+      const sm = attrs.match(/style\s*=\s*"([^"]*)"/i) || attrs.match(/style\s*=\s*'([^']*)'/i);
+      const style = sm ? sanitizeStyle(sm[1]) : '';
+      return style ? `<span style="${style.replace(/"/g, '')}">` : '<span>';
+    }
+    return '<' + lower + '>';
+  });
+  return s.trim();
+}
+function sanitizeAnnouncementConfig(config) {
+  if (!config || typeof config !== 'object') return config;
+  return {
+    ...config,
+    title: sanitizeRichText(config.title || ''),
+    subtitle: sanitizeRichText(config.subtitle || ''),
+  };
+}
+
 // Em produção (Vercel) os arquivos vão para o Vercel Blob, porque o disco da
 // função serverless não é persistente. Em desenvolvimento local, sem o token
 // configurado, caem numa pasta local servida como estático — mesmo
@@ -226,8 +272,12 @@ function registerTvRoutes(app, { h, requirePerm, currentUser }) {
     const { type, name, config } = req.body;
     if (!WIDGET_TYPES.includes(type)) return res.status(400).json({ error: 'Tipo de tela inválido.' });
     if (!name || !name.trim()) return res.status(400).json({ error: 'Dê um nome para a tela.' });
+    const configFinal = type === 'announcement' ? sanitizeAnnouncementConfig(config) : config;
+    if (type === 'announcement' && !(configFinal.title || '').replace(/<[^>]*>/g, '').trim()) {
+      return res.status(400).json({ error: 'Informe o título do comunicado.' });
+    }
     const r = await db.run('INSERT INTO tv_screens (name, type, config) VALUES (?, ?, ?)',
-      name.trim(), type, JSON.stringify(config || {}));
+      name.trim(), type, JSON.stringify(configFinal || {}));
     const row = await db.get('SELECT * FROM tv_screens WHERE id = ?', r.lastInsertRowid);
     res.status(201).json(serializeScreen(row));
   }));
@@ -236,8 +286,9 @@ function registerTvRoutes(app, { h, requirePerm, currentUser }) {
     const existing = await db.get('SELECT * FROM tv_screens WHERE id = ?', req.params.id);
     if (!existing || !WIDGET_TYPES.includes(existing.type)) return res.status(404).json({ error: 'Tela não encontrada.' });
     const { name, config } = req.body;
+    const configFinal = existing.type === 'announcement' ? sanitizeAnnouncementConfig(config) : config;
     await db.run('UPDATE tv_screens SET name = ?, config = ? WHERE id = ?',
-      (name && name.trim()) || existing.name, JSON.stringify(config || {}), req.params.id);
+      (name && name.trim()) || existing.name, JSON.stringify(configFinal || {}), req.params.id);
     await db.run('DELETE FROM tv_screen_cache WHERE screen_id = ?', req.params.id);
     const row = await db.get('SELECT * FROM tv_screens WHERE id = ?', req.params.id);
     res.json(serializeScreen(row));

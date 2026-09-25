@@ -232,11 +232,26 @@ function openWidgetModal(existing) {
     if (type === 'announcement') {
       const title = (existing && existing.config && existing.config.title) || '';
       const subtitle = (existing && existing.config && existing.config.subtitle) || '';
+      const toolbar = (prefix) => `
+        <div class="rte-toolbar">
+          <button type="button" class="rte-btn" data-target="${prefix}" data-cmd="bold"><b>N</b></button>
+          <button type="button" class="rte-btn" data-target="${prefix}" data-cmd="italic"><i>I</i></button>
+          <button type="button" class="rte-btn" data-target="${prefix}" data-cmd="underline"><u>S</u></button>
+          <span class="rte-sep"></span>
+          <button type="button" class="rte-btn rte-swatch" data-target="${prefix}" data-cmd="foreColor" data-color="#F58634" style="color:#F58634">A</button>
+          <button type="button" class="rte-btn rte-swatch" data-target="${prefix}" data-cmd="foreColor" data-color="#14395c" style="color:#14395c">A</button>
+          <button type="button" class="rte-btn rte-swatch" data-target="${prefix}" data-cmd="foreColor" data-color="#ffffff" style="color:#fff;text-shadow:0 0 1px #888">A</button>
+          <button type="button" class="rte-btn" data-target="${prefix}" data-cmd="hiliteColor" data-color="#fff3cd">🖍</button>
+          <span class="rte-sep"></span>
+          <button type="button" class="rte-btn" data-target="${prefix}" data-cmd="removeFormat">Limpar</button>
+        </div>`;
       return `
         <label>Título (grande, em destaque)</label>
-        <input class="inp" id="wTitle" value="${esc(title)}" placeholder="Ex: Reunião geral sexta-feira">
-        <label>Texto complementar (opcional)</label>
-        <input class="inp" id="wSubtitle" value="${esc(subtitle)}" placeholder="Ex: Às 10h no auditório">
+        ${toolbar('wTitle')}
+        <div class="rte-editable" id="wTitle" contenteditable="true" data-placeholder="Ex: Reunião geral sexta-feira">${title}</div>
+        <label style="margin-top:14px">Texto complementar (opcional)</label>
+        ${toolbar('wSubtitle')}
+        <div class="rte-editable" id="wSubtitle" contenteditable="true" data-placeholder="Ex: Às 10h no auditório">${subtitle}</div>
         <p style="color:var(--muted);margin-top:10px;font-size:12.5px">Aparece em tela cheia com a identidade visual da Riva — mesmo estilo das telas de clima e relógio.</p>`;
     }
     return `<p style="color:var(--muted);margin-top:10px">Sem configuração adicional — mostra data e hora atualizadas automaticamente.</p>`;
@@ -268,6 +283,16 @@ function openWidgetModal(existing) {
         renderSourcesList();
       };
     }
+    if (type === 'announcement') {
+      document.querySelectorAll('.rte-btn').forEach((b) => {
+        // mousedown (não click) evita perder a seleção de texto antes do comando rodar.
+        b.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          $(b.dataset.target).focus();
+          document.execCommand(b.dataset.cmd, false, b.dataset.color || null);
+        });
+      });
+    }
   }
 
   $('modalTitle').textContent = isEdit ? 'Editar tela' : 'Criar tela';
@@ -285,11 +310,11 @@ function openWidgetModal(existing) {
     if (!name) return toast('Dê um nome para a tela.', true);
     const config = type === 'weather' ? { city: $('wCity').value.trim() }
       : type === 'news' ? { sources }
-      : type === 'announcement' ? { title: $('wTitle').value.trim(), subtitle: $('wSubtitle').value.trim() }
+      : type === 'announcement' ? { title: $('wTitle').innerHTML.trim(), subtitle: $('wSubtitle').innerHTML.trim() }
       : {};
     if (type === 'weather' && !config.city) return toast('Informe a cidade.', true);
     if (type === 'news' && sources.length === 0) return toast('Adicione ao menos uma fonte RSS.', true);
-    if (type === 'announcement' && !config.title) return toast('Informe o título do comunicado.', true);
+    if (type === 'announcement' && !$('wTitle').textContent.trim()) return toast('Informe o título do comunicado.', true);
 
     if (isEdit) {
       await tvApi('/screens/widget/' + existing.id, { method: 'PUT', body: JSON.stringify({ name, config }) });
