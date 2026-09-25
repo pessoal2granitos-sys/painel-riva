@@ -547,6 +547,38 @@ table.tbl.fixa .badge { padding: 3px 7px; font-size: 10px; max-width: 100%; }
 .qual-item.aviso  { border-left: 4px solid var(--amber); }
 .qual-item.zerado { border-left: 4px solid var(--green); opacity: .8; }
 
+/* ---------- Organização Pessoal: Kanban e Calendário ---------- */
+.org-col-body { min-height: 80px; }
+.org-card {
+  background: #fff; border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; cursor: pointer;
+  box-shadow: 0 1px 2px rgba(20,57,92,.08); transition: transform .15s var(--ease), box-shadow .15s var(--ease);
+}
+.org-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-lift); }
+.org-card.dragging { opacity: .4; }
+
+.org-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.org-cal-cell {
+  min-height: 84px; border: 1.5px solid var(--line); border-radius: 9px; padding: 6px; font-size: 11px;
+  overflow: hidden; background: #fff;
+}
+.org-cal-cell.cabecalho {
+  min-height: auto; border: none; background: none; text-align: center; font-weight: 800;
+  text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-size: 10.5px; padding: 4px 0;
+}
+.org-cal-cell.vazia { border: none; background: none; }
+.org-cal-cell.hoje { border-color: var(--orange); box-shadow: 0 0 0 2px rgba(245,134,52,.15); }
+.org-cal-dia { font-weight: 700; color: var(--navy); margin-bottom: 3px; }
+.org-cal-feriado {
+  color: #fff; border-radius: 5px; padding: 2px 5px; font-size: 9.5px; font-weight: 700; margin-bottom: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: default;
+}
+.org-cal-tarefa {
+  background: #eef3f8; color: var(--navy); border-radius: 5px; padding: 2px 5px; font-size: 9.5px; font-weight: 600;
+  margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer;
+}
+.org-cal-tarefa:hover { background: var(--orange); color: #fff; }
+@media (max-width: 900px) { .org-cal-grid { grid-template-columns: repeat(7, minmax(38px, 1fr)); } .org-cal-cell { font-size: 9px; min-height: 60px; } }
+
 .qcard { border: 1.5px solid var(--line); border-radius: 12px; padding: 14px 16px; }
 .qcard h4 { font-size: 13px; color: var(--navy); margin-bottom: 4px; }
 .qcard .qty { font-size: 24px; font-weight: 800; }

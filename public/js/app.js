@@ -268,7 +268,7 @@ function renderTab() {
                    realizados: renderRealizados, pendencias: renderPendencias,
                    cargos: renderCargos, custo: renderCusto,
                    qualidade: renderQualidade, tv: renderTV, pessoas: renderPessoas,
-                   universidade: renderUniversidade, admin: renderAdmin }[currentTab];
+                   universidade: renderUniversidade, organizacao: renderOrganizacao, admin: renderAdmin }[currentTab];
   if (render) render();
 }
 

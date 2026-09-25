@@ -316,6 +316,24 @@ CREATE TABLE IF NOT EXISTS uni_progress (
   concluida_em TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (employee_id, lesson_id)
 );
+
+-- ---- Organização pessoal (painel da administradora) ----
+-- Um cartão do Kanban com prazo é, ao mesmo tempo, um item da agenda/calendário
+-- — não existe uma segunda tabela de "tarefas": a mesma linha alimenta as duas
+-- telas, pra nunca ter duas listas de pendência desencontradas.
+CREATE TABLE IF NOT EXISTS kanban_cards (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  coluna TEXT NOT NULL DEFAULT 'a_fazer',
+  titulo TEXT NOT NULL,
+  descricao TEXT,
+  prazo TEXT,
+  prioridade TEXT NOT NULL DEFAULT 'normal',
+  ordem INTEGER NOT NULL DEFAULT 100,
+  criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+  concluido_em TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_kanban_owner ON kanban_cards(owner_user_id);
 `;
 
 let ready = null;
@@ -504,6 +522,10 @@ function init() {
         }
         if (perm.universidade === undefined) {      // Gerir cursos: quem já configura o sistema
           perm.universidade = admin ? true : !!perm.config;
+          mudou = true;
+        }
+        if (perm.organizacao === undefined) {       // Painel pessoal: só a administradora por padrão
+          perm.organizacao = admin;
           mudou = true;
         }
         if (mudou) await run('UPDATE profiles SET permissions = ? WHERE id = ?', JSON.stringify(perm), p.id);

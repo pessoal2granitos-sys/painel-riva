@@ -1040,6 +1040,9 @@ app.get('/universidade', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'universidade.html'));
 });
 
+// ---- Organização Pessoal ----
+require('./src/organizacao').registerOrganizacaoRoutes(app, { h, requirePerm });
+
 // ---- Páginas ----
 const temSessao = (req) => !!(req.session && (req.session.userId || req.session.convidado));
 // A página do painel é servida só por estas rotas, nunca pelo diretório estático:
