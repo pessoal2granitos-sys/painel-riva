@@ -13,6 +13,7 @@ const PAINEIS = [
   { chave: 'realizados',   nome: 'Treinamentos Realizados', desc: 'Quem foi treinado em cada mês, com horas e turmas' },
   { chave: 'qualidade',    nome: 'Qualidade dos Dados',    desc: 'Inconsistências e lacunas de cadastro' },
   { chave: 'avisos',       nome: 'Avisos',                 desc: 'Comunicados publicados pela administração' },
+  { chave: 'pessoas',      nome: 'Gestão de Pessoas',      desc: 'Indicadores de RH: turnover, hora extra, absenteísmo e custo da folha' },
 ];
 
 // Ações administrativas.
@@ -86,7 +87,7 @@ function permsGestorPublico() {
 // Ações que nunca fazem sentido para quem entra sem se identificar, por mais que
 // o perfil seja editado: alterar dados, gerenciar contas ou apagar registros.
 const NEGADAS_SEM_LOGIN = ['lancamentos', 'colaboradores', 'config', 'usuarios',
-                           'perfis', 'importar', 'excluir', 'publicar_avisos', 'tv'];
+                           'perfis', 'importar', 'excluir', 'publicar_avisos', 'tv', 'pessoas'];
 
 module.exports = { PAINEIS, ACOES, TODAS, PADRAO, POR_PAPEL, GESTOR_PUBLICO,
                    permsGestorPublico, NEGADAS_SEM_LOGIN, normalizar };

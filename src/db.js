@@ -111,6 +111,7 @@ CREATE TABLE IF NOT EXISTS employees (
   admissao TEXT,
   demissao TEXT,
   active INTEGER NOT NULL DEFAULT 1,
+  departamento TEXT,
   UNIQUE(name, company_id)
 );
 CREATE TABLE IF NOT EXISTS trails (
@@ -244,6 +245,32 @@ CREATE TABLE IF NOT EXISTS tv_publications (
   playlist_id INTEGER NOT NULL REFERENCES tv_playlists(id) ON DELETE CASCADE,
   published_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- ---- Gestão de Pessoas (RH) ----
+-- Uma linha por colaborador por mês de referência, vinda da planilha de folha
+-- que o RH importa. Guarda também o nome exatamente como veio na planilha
+-- (nome_planilha), pra nunca perder o dado quando o nome não bate com o
+-- cadastro de colaboradores (grafia diferente, gente que já saiu, etc.).
+CREATE TABLE IF NOT EXISTS hr_payroll (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  employee_id INTEGER REFERENCES employees(id),
+  nome_planilha TEXT NOT NULL,
+  departamento TEXT,
+  mes_ref TEXT NOT NULL,
+  salario_base REAL,
+  salario_liquido REAL,
+  horas_extra_50 REAL,
+  horas_extra_100 REAL,
+  adicionais REAL,
+  descontos REAL,
+  faltas_horas REAL,
+  atestados_horas REAL,
+  inss REAL,
+  fgts REAL,
+  custo_total REAL,
+  criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(nome_planilha, mes_ref)
+);
 `;
 
 let ready = null;
@@ -259,6 +286,8 @@ function init() {
       if (!cols.includes('sort_order')) await run('ALTER TABLE companies ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 100');
       const cargoCols = (await all('PRAGMA table_info(cargos)')).map(c => c.name);
       if (!cargoCols.includes('trail_source_id')) await run('ALTER TABLE cargos ADD COLUMN trail_source_id INTEGER REFERENCES cargos(id)');
+      const empCols = (await all('PRAGMA table_info(employees)')).map(c => c.name);
+      if (!empCols.includes('departamento')) await run('ALTER TABLE employees ADD COLUMN departamento TEXT');
       const userCols = (await all('PRAGMA table_info(users)')).map(c => c.name);
       if (!userCols.includes('profile_id')) await run('ALTER TABLE users ADD COLUMN profile_id INTEGER REFERENCES profiles(id)');
       // Código de recuperação da administradora: gerado por ela mesma, uso único.
@@ -419,6 +448,10 @@ function init() {
         }
         if (perm.tv === undefined) {               // TV corporativa: quem já configura
           perm.tv = admin ? true : !!perm.config;
+          mudou = true;
+        }
+        if (perm.pessoas === undefined) {           // RH: dado sensível, só a administradora por padrão
+          perm.pessoas = admin;
           mudou = true;
         }
         if (mudou) await run('UPDATE profiles SET permissions = ? WHERE id = ?', JSON.stringify(perm), p.id);

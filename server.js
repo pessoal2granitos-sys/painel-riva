@@ -1031,6 +1031,9 @@ app.get(['/player', '/player/:code'], (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'tv-player.html'));
 });
 
+// ---- Gestão de Pessoas (RH) ----
+require('./src/hr').registerHrRoutes(app, { h, requirePerm, currentUser });
+
 // ---- Páginas ----
 const temSessao = (req) => !!(req.session && (req.session.userId || req.session.convidado));
 // A página do painel é servida só por estas rotas, nunca pelo diretório estático:
