@@ -41,19 +41,18 @@
   /* flexbox "gap" não existe no WebView do Android 7 (Chromium 52); usamos margem no filho seguinte. */
   .brand-screen > * + * { margin-top: 22px; }
 
-  /* Slides de mídia (imagem/vídeo): a imagem/vídeo inteiro sempre visível, sem
-     cortar nada — um comunicado com texto não pode perder parte do conteúdo.
-     Quando a proporção do arquivo não bate com a da TV, sobra um fundo com o
-     degradê da marca (igual ao das telas de clima/notícias) em vez de tarja
-     preta crua. */
+  /* Slides de mídia (imagem/vídeo): preenche a tela inteira da TV, sem sobrar
+     nenhuma faixa/fundo. Se o arquivo não tiver exatamente a proporção da TV
+     (1920x1080, 16:9), o excedente das bordas é recortado — é a única forma de
+     preencher 100% da tela sem deixar espaço vazio. Por isso os comunicados
+     devem ser criados/exportados em 16:9 (ex: 1920x1080): assim preenchem a
+     tela toda sem cortar nada de importante. */
   .media {
     width: 100%;
     height: 100%;
-    object-fit: contain;
+    object-fit: cover;
     object-position: center;
-    background:
-      radial-gradient(ellipse at top, rgba(255,255,255,0.06) 0%, transparent 60%),
-      linear-gradient(160deg, var(--riva-navy) 0%, var(--riva-navy-dark) 100%);
+    background: #000;
   }
 
   /* Base visual das telas de widget (clima, notícias, relógio, tela de espera) */
