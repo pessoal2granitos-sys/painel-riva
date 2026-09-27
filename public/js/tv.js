@@ -423,10 +423,13 @@ async function renderTvPlaylists() {
 
   $('btnCreatePlaylist').onclick = async () => {
     const name = $('tvPlaylistName').value.trim();
-    if (!name) return;
+    if (!name) return toast('Dê um nome pra playlist antes de criar.', true);
     const p = await tvApi('/playlists', { method: 'POST', body: JSON.stringify({ name }) });
     openPlaylistEditor(p.id);
   };
+  $('tvPlaylistName').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); $('btnCreatePlaylist').click(); }
+  });
   document.querySelectorAll('.tv-edit-playlist').forEach((b) => { b.onclick = () => openPlaylistEditor(b.dataset.id); });
   document.querySelectorAll('.tv-dup-playlist').forEach((b) => {
     b.onclick = async () => { await tvApi('/playlists/' + b.dataset.id + '/duplicate', { method: 'POST' }); renderTvPlaylists(); };
