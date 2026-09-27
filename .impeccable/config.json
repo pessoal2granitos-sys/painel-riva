@@ -20,6 +20,33 @@
         ],
         "createdAt": "2026-09-25T21:38:52.557Z",
         "reason": "opacity:0/.visible toggle on .screen is the intentional crossfade transition mechanism between playlist items (image/video/widgets), controlled at runtime by JS class toggling — not an abandoned buried image"
+      },
+      {
+        "rule": "border-accent-on-rounded",
+        "value": "*",
+        "files": [
+          "public/login.html"
+        ],
+        "createdAt": "2026-09-27T21:29:51.207Z",
+        "reason": "Borda inferior laranja no logo-wrap (.login-card .logo-wrap) é identidade visual da marca, pré-existente em style.css, não introduzida nesta edição (só reescrevi o fluxo de login, não toquei em CSS)."
+      },
+      {
+        "rule": "all-caps-body",
+        "value": "*",
+        "files": [
+          "public/login.html"
+        ],
+        "createdAt": "2026-09-27T21:29:53.779Z",
+        "reason": "text-transform:uppercase é só nos rótulos curtos E-MAIL/SENHA (.login-card label), não em texto corrido; regra pré-existente em style.css, não alterada nesta edição."
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "public/login.html"
+        ],
+        "createdAt": "2026-09-27T21:29:56.308Z",
+        "reason": "Mesma borda de destaque da marca (logo-wrap), pré-existente e usada no site inteiro; não foi introduzida por esta edição, que só removeu o botão de acesso sem login."
       }
     ]
   }
