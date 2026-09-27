@@ -32,14 +32,6 @@ const ACOES = [
   { chave: 'tv',              nome: 'TV Corporativa',      desc: 'Cadastrar TVs, enviar conteúdos, montar playlists e publicar' },
 ];
 
-// Perfil usado pelo acesso sem login. É um perfil de verdade, gravado no banco e
-// editável pela administradora — o que está aqui é apenas o estado inicial.
-const GESTOR_PUBLICO = {
-  nome: 'Gestor (sem login)',
-  descricao: 'Quem entra pelo botão "Acesso do Gestor", sem senha',
-  inicial: ['visao', 'vencimentos', 'realizados', 'cargos', 'custo', 'avisos', 'exportar'],
-};
-
 const TODAS = [...PAINEIS, ...ACOES].map(p => p.chave);
 
 // Perfis criados automaticamente na primeira execução. Podem ser editados, mas
@@ -81,15 +73,4 @@ function normalizar(permissoes) {
   return Object.fromEntries(TODAS.map(k => [k, obj[k] === true]));
 }
 
-// Estado inicial do perfil do gestor, na primeira vez que o sistema sobe.
-function permsGestorPublico() {
-  return Object.fromEntries(TODAS.map(k => [k, GESTOR_PUBLICO.inicial.includes(k)]));
-}
-
-// Ações que nunca fazem sentido para quem entra sem se identificar, por mais que
-// o perfil seja editado: alterar dados, gerenciar contas ou apagar registros.
-const NEGADAS_SEM_LOGIN = ['lancamentos', 'colaboradores', 'config', 'usuarios',
-                           'perfis', 'importar', 'excluir', 'publicar_avisos', 'tv', 'pessoas', 'universidade', 'organizacao'];
-
-module.exports = { PAINEIS, ACOES, TODAS, PADRAO, POR_PAPEL, GESTOR_PUBLICO,
-                   permsGestorPublico, NEGADAS_SEM_LOGIN, normalizar };
+module.exports = { PAINEIS, ACOES, TODAS, PADRAO, POR_PAPEL, normalizar };

@@ -104,11 +104,7 @@ function renderHeader() {
     (ultimo ? ' &nbsp;|&nbsp; Último lançamento: <b>' + esc(ultimo) + '</b>' : '');
   $('userName').textContent = ME.name;
   $('userRole').textContent = ME.profile || ROLE_LABEL[ME.role] || ME.role;
-  $('userAvatar').textContent = ME.convidado ? '👁'
-    : ME.name.trim().split(/\s+/).map(p => p[0]).slice(0, 2).join('').toUpperCase();
-  // Visitante não tem conta: nada de trocar senha, e "Sair" vira "Entrar".
-  $('btnMyPassword').style.display = ME.convidado ? 'none' : '';
-  $('btnLogout').textContent = ME.convidado ? 'Entrar' : 'Sair';
+  $('userAvatar').textContent = ME.name.trim().split(/\s+/).map(p => p[0]).slice(0, 2).join('').toUpperCase();
 
   // Cada aba aparece só se o perfil permitir. O servidor aplica as mesmas regras,
   // então esconder aqui é conveniência, não a proteção em si.
@@ -1591,83 +1587,7 @@ const SECOES_ADMIN = [
   { id: 'perfis',        nome: 'Perfis de Acesso',    perm: 'perfis',        render: () => renderPerfis() },
   { id: 'usuarios',      nome: 'Usuários',            perm: 'usuarios',      render: () => renderUsuarios() },
   { id: 'dados',         nome: 'Importar / Exportar', perm: 'importar',      render: () => renderImportar() },
-  { id: 'acesso',        nome: 'Acesso dos Gestores', perm: 'config',        render: () => renderConfigAcesso() },
 ];
-
-// Liga ou desliga a entrada sem login, define o que o gestor pode fazer e
-// mostra o endereço a divulgar.
-async function renderConfigAcesso() {
-  const cfg = await api('/api/config');
-  const endereco = location.origin;
-  const bloqueada = (k) => cfg.bloqueadas.includes(k);
-
-  const item = (i) => `
-    <label class="perm-item ${bloqueada(i.chave) ? 'travada' : ''}" title="${esc(i.desc)}">
-      <input type="checkbox" class="cfgPerm" value="${i.chave}"
-        ${cfg.permsGestor[i.chave] ? 'checked' : ''} ${bloqueada(i.chave) ? 'disabled' : ''}>
-      <span><b>${esc(i.nome)}</b><br><span class="hint">${esc(i.desc)}</span></span>
-      ${bloqueada(i.chave) ? '<span class="badge role">indisponível sem login</span>' : ''}
-    </label>`;
-
-  $('cadContent').innerHTML = `
-    <div class="grid cols-2">
-      <div class="card">
-        <h3>Entrada sem login</h3>
-        <p class="hint">Ligado, a tela de entrada mostra o botão <b>Acesso do Gestor</b> e quem clicar
-        entra direto, sem digitar senha.</p>
-        <label style="display:flex;align-items:center;gap:10px;margin:16px 0;font-size:14px">
-          <input type="checkbox" id="cfgAcesso" ${cfg.acessoGestor ? 'checked' : ''}
-                 style="width:auto;accent-color:var(--orange);transform:scale(1.3)">
-          <b>${cfg.acessoGestor ? 'Liberado' : 'Desativado'}</b>
-        </label>
-        <h3 style="margin-top:22px">Endereço para divulgar</h3>
-        <div style="display:flex;gap:8px;margin:10px 0">
-          <input id="cfgUrl" readonly value="${esc(endereco)}"
-                 style="flex:1;padding:10px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:14px">
-          <button class="btn-navy" id="btnCopiar">Copiar</button>
-        </div>
-        <p class="hint" style="color:var(--amber)"><b>Atenção:</b> com o acesso liberado, qualquer pessoa
-        que tenha o endereço vê nomes, cargos e situação de treinamento dos colaboradores, sem senha.
-        Divulgue apenas internamente e desative aqui se precisar fechar.</p>
-      </div>
-
-      <div class="card">
-        <h3>O que o gestor pode <small>vale para todos que entram sem login</small></h3>
-        <p class="hint" style="margin-bottom:12px">Marque os painéis que ele enxerga e as ações que pode
-        executar. Vale imediatamente, inclusive para quem já estiver com a tela aberta.</p>
-
-        <label style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Painéis</label>
-        <div class="checklist" style="margin:6px 0 16px">${cfg.catalogo.paineis.map(item).join('')}</div>
-
-        <label style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Ações</label>
-        <div class="checklist" style="margin-top:6px">${cfg.catalogo.acoes.map(item).join('')}</div>
-
-        <p class="hint" style="margin-top:12px">As ações marcadas como <b>indisponíveis sem login</b> alteram
-        dados ou contas — o servidor as recusa para quem não se identifica, mesmo que fossem marcadas aqui.</p>
-        <div class="toolbar" style="margin:14px 0 0">
-          <div style="flex:1"></div>
-          <button class="btn-primary" id="btnSalvarPerms">Salvar permissões</button>
-        </div>
-      </div>
-    </div>`;
-
-  $('cfgAcesso').addEventListener('change', async (e) => {
-    const r = await api('/api/config', { method: 'PUT', body: JSON.stringify({ acessoGestor: e.target.checked }) });
-    toast(r.acessoGestor ? 'Acesso do gestor liberado' : 'Acesso do gestor desativado');
-    renderConfigAcesso();
-  });
-  $('btnCopiar').addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText(endereco); toast('Endereço copiado'); }
-    catch { $('cfgUrl').select(); toast('Selecione e copie com Ctrl+C', true); }
-  });
-  $('btnSalvarPerms').addEventListener('click', async () => {
-    const permsGestor = {};
-    document.querySelectorAll('.cfgPerm').forEach(c => { permsGestor[c.value] = c.checked; });
-    await api('/api/config', { method: 'PUT', body: JSON.stringify({ permsGestor }) });
-    toast('Permissões do gestor atualizadas');
-    renderConfigAcesso();
-  });
-}
 
 function renderAdmin() {
   const disponiveis = SECOES_ADMIN.filter(s => !s.perm || pode(s.perm));

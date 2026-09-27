@@ -41,11 +41,13 @@
   /* flexbox "gap" não existe no WebView do Android 7 (Chromium 52); usamos margem no filho seguinte. */
   .brand-screen > * + * { margin-top: 22px; }
 
-  /* Slides de mídia (imagem/vídeo): tela cheia, sem nenhum elemento por cima. */
+  /* Slides de mídia (imagem/vídeo): preenche a tela toda, respeitando a proporção
+     da TV (recorta o excedente da imagem/vídeo em vez de deixar tarjas pretas). */
   .media {
     width: 100%;
     height: 100%;
-    object-fit: contain;
+    object-fit: cover;
+    object-position: center;
     background: #000;
   }
 

@@ -130,31 +130,9 @@ app.use(h(async (req, res, next) => { await ensureReady(); next(); }));
 // O usuário carrega o perfil junto. As permissões vêm do perfil, exceto para a
 // administradora original, que mantém acesso total mesmo que o perfil seja alterado
 // — assim não há como o sistema ficar sem ninguém capaz de administrá-lo.
-// ---- Acesso do gestor, sem login ----
-// Um clique na tela de entrada abre uma sessão somente-leitura, limitada aos
-// painéis de indicadores e aos avisos. Pode ser desligado pela administradora.
-async function acessoGestorLiberado() {
-  const r = await db.get("SELECT valor FROM settings WHERE chave = 'acesso_gestor'");
-  return !r || r.valor !== 'off';   // liberado por padrão
-}
-// As permissões do gestor vêm do perfil "Gestor (sem login)", que a
-// administradora edita. Por segurança, nada que altere dados é aceito aqui,
-// por mais que o perfil seja marcado — quem não se identifica não escreve.
-async function usuarioGestorPublico() {
-  const perfil = await db.get('SELECT * FROM profiles WHERE name = ?', perms.GESTOR_PUBLICO.nome);
-  const config = perfil ? perms.normalizar(perfil.permissions) : perms.permsGestorPublico();
-  for (const k of perms.NEGADAS_SEM_LOGIN) config[k] = false;
-  return {
-    id: null, name: 'Gestor', email: null, role: 'gestor_publico',
-    profile_name: 'Gestor (visualização)', convidado: true,
-    perms: config, scope: 'all',
-  };
-}
-
+// Este painel exige login em qualquer circunstância: não existe modo de acesso
+// sem senha, nem alternável por configuração.
 async function currentUser(req) {
-  if (req.session && req.session.convidado) {
-    return (await acessoGestorLiberado()) ? await usuarioGestorPublico() : null;
-  }
   if (!req.session || !req.session.userId) return null;
   const user = await db.get(`SELECT u.*, p.name AS profile_name, p.scope AS profile_scope,
       p.permissions AS profile_permissions
@@ -173,16 +151,6 @@ const requireAuth = h(async (req, res, next) => {
   req.user = user;
   next();
 });
-// Rotas que o acesso sem login não deve alcançar, mesmo sendo de leitura:
-// detalhe individual de colaborador e qualquer coisa ligada à conta.
-const semConvidado = h(async (req, res, next) => {
-  const user = await currentUser(req);
-  if (!user) return res.status(401).json({ error: 'Não autenticado' });
-  if (user.convidado) return res.status(403).json({ error: 'Disponível apenas para usuários com login' });
-  req.user = user;
-  next();
-});
-
 // Exige uma permissão. Aceita várias chaves: basta ter uma delas.
 function requirePerm(...chaves) {
   return h(async (req, res, next) => {
@@ -242,18 +210,6 @@ app.post('/api/login', h(async (req, res) => {
   res.json({ ok: true, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
 }));
 
-// Entrada do gestor: um clique, sem credenciais.
-app.get('/api/acesso-gestor', h(async (req, res) => {
-  res.json({ liberado: await acessoGestorLiberado() });
-}));
-app.post('/api/acesso-gestor', h(async (req, res) => {
-  if (!await acessoGestorLiberado()) {
-    return res.status(403).json({ error: 'O acesso de visualização está desativado. Use seu login.' });
-  }
-  req.session = { convidado: true };
-  res.json({ ok: true });
-}));
-
 app.post('/api/logout', (req, res) => { req.session = null; res.json({ ok: true }); });
 
 app.get('/api/me', requireAuth, (req, res) => {
@@ -261,7 +217,7 @@ app.get('/api/me', requireAuth, (req, res) => {
   res.json({ id: u.id, name: u.name, email: u.email, role: u.role });
 });
 
-app.post('/api/me/password', semConvidado, h(async (req, res) => {
+app.post('/api/me/password', requireAuth, h(async (req, res) => {
   const { current, next } = req.body || {};
   if (!bcrypt.compareSync(String(current || ''), req.user.password_hash)) {
     return res.status(400).json({ error: 'Senha atual incorreta' });
@@ -282,7 +238,7 @@ function gerarCodigoRecuperacao() {
   return 'RIVA-' + grupo() + '-' + grupo() + '-' + grupo();
 }
 
-app.post('/api/me/recovery-code', semConvidado, h(async (req, res) => {
+app.post('/api/me/recovery-code', requireAuth, h(async (req, res) => {
   if (req.user.role !== 'admin') {
     return res.status(403).json({ error: 'Disponível apenas para a administradora' });
   }
@@ -335,7 +291,6 @@ app.get('/api/dataset', requireAuth, h(async (req, res) => {
     id: req.user.id, name: req.user.name, role: req.user.role,
     profile: req.user.profile_name || null,
     perms: req.user.perms, scope: req.user.scope,
-    convidado: !!req.user.convidado,
   };
   res.json(ds);
 }));
@@ -491,46 +446,6 @@ app.delete('/api/avisos/:id', podePublicar, h(async (req, res) => {
   await db.run('DELETE FROM avisos WHERE id = ?', Number(req.params.id));
   if (antes) await registrar(req, 'Aviso excluído', { detalhe: antes.titulo });
   res.json({ ok: true });
-}));
-
-// ---- Configurações ----
-async function estadoConfig() {
-  const gestor = await usuarioGestorPublico();
-  return {
-    acessoGestor: await acessoGestorLiberado(),
-    permsGestor: gestor.perms,
-    // O que não pode ser concedido a quem entra sem se identificar.
-    bloqueadas: perms.NEGADAS_SEM_LOGIN,
-    catalogo: { paineis: perms.PAINEIS, acoes: perms.ACOES },
-  };
-}
-
-app.get('/api/config', requirePerm('config'), h(async (req, res) => {
-  res.json(await estadoConfig());
-}));
-
-app.put('/api/config', requirePerm('config'), h(async (req, res) => {
-  if (req.body.acessoGestor !== undefined) {
-    const valor = req.body.acessoGestor ? 'on' : 'off';
-    await db.run(`INSERT INTO settings (chave, valor) VALUES ('acesso_gestor', ?)
-      ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor`, valor);
-    await registrar(req, 'Configuração alterada', {
-      detalhe: 'acesso do gestor sem login: ' + (valor === 'on' ? 'liberado' : 'desativado') });
-  }
-
-  if (req.body.permsGestor) {
-    const novas = perms.normalizar(req.body.permsGestor);
-    for (const k of perms.NEGADAS_SEM_LOGIN) novas[k] = false;
-    const antes = (await usuarioGestorPublico()).perms;
-    await db.run('UPDATE profiles SET permissions = ? WHERE name = ?',
-      JSON.stringify(novas), perms.GESTOR_PUBLICO.nome);
-    const mudou = perms.TODAS.filter(k => !!antes[k] !== !!novas[k])
-      .map(k => (novas[k] ? '+' : '-') + k);
-    if (mudou.length) {
-      await registrar(req, 'Permissões do gestor alteradas', { detalhe: mudou.join(' ') });
-    }
-  }
-  res.json({ ok: true, ...(await estadoConfig()) });
 }));
 
 // ---- Perfis de acesso ----
@@ -801,7 +716,7 @@ app.delete('/api/historico', requirePerm('excluir'), h(async (req, res) => {
 }));
 
 // ---- Lançamentos de treinamento ----
-app.get('/api/records/:employeeId', semConvidado, h(async (req, res) => {
+app.get('/api/records/:employeeId', requireAuth, h(async (req, res) => {
   if (!await employeeInScope(req.user, req.params.employeeId)) {
     return res.status(403).json({ error: 'Este colaborador não faz parte da sua equipe' });
   }
@@ -857,7 +772,7 @@ app.delete('/api/records/:id', podeLancar, h(async (req, res) => {
 }));
 
 // ---- Exigências individuais ----
-app.get('/api/requirements/:employeeId', semConvidado, h(async (req, res) => {
+app.get('/api/requirements/:employeeId', requireAuth, h(async (req, res) => {
   if (!await employeeInScope(req.user, req.params.employeeId)) {
     return res.status(403).json({ error: 'Este colaborador não faz parte da sua equipe' });
   }
@@ -1044,7 +959,7 @@ app.get('/universidade', (req, res) => {
 require('./src/organizacao').registerOrganizacaoRoutes(app, { h, requirePerm });
 
 // ---- Páginas ----
-const temSessao = (req) => !!(req.session && (req.session.userId || req.session.convidado));
+const temSessao = (req) => !!(req.session && req.session.userId);
 // A página do painel é servida só por estas rotas, nunca pelo diretório estático:
 // sem isso, /index.html entregaria a tela a quem não tem sessão. Ela não contém
 // dados — eles vêm da API, que é protegida —, mas não há motivo para exibir a
