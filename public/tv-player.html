@@ -169,7 +169,7 @@
     </div>
 
     <img id="imageScreen" class="screen media" />
-    <video id="videoScreen" class="screen media" muted playsinline></video>
+    <video id="videoScreen" class="screen media" playsinline></video>
 
     <div id="clockScreen" class="screen brand-screen">
       <img class="brand-logo" src="/img/logo.png" alt="Riva Stones" />
@@ -316,6 +316,10 @@
 
   const imageScreen = screens.image;
   const videoScreen = screens.video;
+  // Som só na TV de verdade: no preview (iframe dentro do painel de edição de
+  // playlist) o navegador bloqueia autoplay com som, e o vídeo nem chegaria a
+  // tocar. Sem áudio ali não faz diferença — é só pra conferir o vídeo certo.
+  videoScreen.muted = isPreview;
 
   function showImage(item) {
     imageScreen.onload = function () { showScreen("image"); };
@@ -325,11 +329,27 @@
   }
 
   function showVideo(item) {
-    videoScreen.src = item.url;
+    if (advanceTimer) clearTimeout(advanceTimer);
     videoScreen.onloadeddata = function () { showScreen("video"); };
     videoScreen.onended = advanceToNext;
-    const playPromise = videoScreen.play();
-    if (playPromise && playPromise.catch) playPromise.catch(function () {});
+    // Se o arquivo estiver corrompido ou não puder ser decodificado, "ended"
+    // nunca dispara — sem isto a playlist ficava parada nessa tela pra sempre.
+    videoScreen.onerror = advanceToNext;
+    // Rede de segurança: mesmo sem erro, se "ended" não disparar por qualquer
+    // motivo (autoplay bloqueado, trava de decodificação), avança sozinho
+    // depois da duração real do vídeo (+5s de folga).
+    videoScreen.onloadedmetadata = function () {
+      const dur = isFinite(videoScreen.duration) && videoScreen.duration > 0
+        ? videoScreen.duration : (item.durationSeconds || 30);
+      advanceTimer = setTimeout(advanceToNext, (dur + 5) * 1000);
+    };
+    videoScreen.src = item.url;
+    try {
+      const playPromise = videoScreen.play();
+      if (playPromise && playPromise.catch) playPromise.catch(advanceToNext);
+    } catch (e) {
+      advanceToNext();
+    }
   }
 
   function weatherDescription(code) {
