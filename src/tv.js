@@ -100,6 +100,21 @@ function saveFile(file) {
   return Promise.resolve('/tv-uploads/' + filename);
 }
 
+// Apaga o arquivo por trás de uma tela de imagem/vídeo — sem isto, "Remover"
+// só tirava a linha do banco e o arquivo ficava esquecido no armazenamento
+// pra sempre, o que já encheu o Vercel Blob e suspendeu os uploads uma vez.
+function deleteFile(url) {
+  if (!url) return Promise.resolve();
+  if (USE_BLOB) {
+    const { del } = require('@vercel/blob');
+    return del(url).catch(() => {});
+  }
+  if (url.startsWith('/tv-uploads/')) {
+    fs.unlink(path.join(LOCAL_UPLOADS_DIR, url.slice('/tv-uploads/'.length)), () => {});
+  }
+  return Promise.resolve();
+}
+
 function weatherDescription(code) {
   if (code === 0) return 'Céu limpo';
   if ([1, 2, 3].includes(code)) return 'Parcialmente nublado';
@@ -381,6 +396,7 @@ function registerTvRoutes(app, { h, requirePerm, currentUser }) {
     const { c } = await db.get('SELECT COUNT(*) c FROM tv_playlist_items WHERE screen_id = ?', req.params.id);
     if (c > 0) return res.status(409).json({ error: 'Essa tela está em uso em uma ou mais playlists.' });
     await db.run('DELETE FROM tv_screens WHERE id = ?', req.params.id);
+    await deleteFile(existing.blob_url);
     res.json({ ok: true });
   }));
 
